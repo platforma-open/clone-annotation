@@ -1,0 +1,118 @@
+// The p-column shape of the variant table: one row per distinct molecule, with
+// every well it was seen in.
+
+FEATURES := ["VDJRegion", "FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"]
+SIDES := ["heavy", "light"]
+PER_SIDE := ["chain", "source", "length", "meanQuality", "regionStatus",
+	"vGene", "dGene", "jGene"]
+
+LABELS := {
+	chain: "chain", source: "source", length: "length",
+	meanQuality: "mean Q", regionStatus: "regions",
+	vGene: "V gene", dGene: "D gene", jGene: "J gene"
+}
+
+TYPES := {
+	chain: "String", source: "String", length: "Long",
+	meanQuality: "Double", regionStatus: "String",
+	vGene: "String", dGene: "String", jGene: "String"
+}
+
+SHOWN := {
+	wells: true, wellCount: true, pairStatus: true,
+	heavy_chain: true, heavy_vGene: true, heavy_aa_CDR3: true,
+	light_chain: true, light_vGene: true, light_aa_CDR3: true
+}
+
+// A number can be summarised four ways and nothing in the data says which one
+// fits. All four are carried; the maximum is the one shown, because a well that
+// read low has usually failed rather than measured.
+SUMMARIES := ["min", "median", "max", "mean"]
+SUMMARY_SHOWN := "max"
+
+axisSpec := {
+	name: "pl7.app/vdj/variantKey",
+	type: "String",
+	annotations: { "pl7.app/label": "Variant" }
+}
+
+priority := func(column) {
+	order := {
+		wells: 1000, wellCount: 990, pairStatus: 980,
+		heavy_chain: 910, heavy_vGene: 900, heavy_aa_CDR3: 880,
+		light_chain: 875, light_vGene: 870, light_aa_CDR3: 850
+	}
+	if !is_undefined(order[column]) {
+		return order[column]
+	}
+	return 500
+}
+
+col := func(column, valueType, label, shown) {
+	return {
+		column: column,
+		spec: {
+			valueType: valueType,
+			name: "pl7.app/vdj/variant/" + column,
+			annotations: {
+				"pl7.app/label": label,
+				"pl7.app/table/visibility": shown ? "default" : "optional",
+				"pl7.app/table/orderPriority": string(priority(column))
+			}
+		}
+	}
+}
+
+settings := func(properties) {
+	columns := [
+		col("wells", "String", "Wells", true),
+		col("wellCount", "Long", "Wells behind it", true),
+		col("pairStatus", "String", "Pairing", true)
+	]
+
+	for side in SIDES {
+		title := side == "heavy" ? "Heavy" : "Light"
+		for f in PER_SIDE {
+			name := side + "_" + f
+			columns = append(columns,
+				col(name, TYPES[f], title + " " + LABELS[f], SHOWN[name] == true))
+		}
+		for f in FEATURES {
+			name := side + "_aa_" + f
+			columns = append(columns,
+				col(name, "String", title + " " + f + " aa", SHOWN[name] == true))
+		}
+		for f in FEATURES {
+			columns = append(columns,
+				col(side + "_nt_" + f, "String", title + " " + f + " nt", false))
+		}
+	}
+
+	if !is_undefined(properties) {
+		for i, p in properties {
+			base := "prop_" + string(i)
+			// Every well's value, kept as it stands, beside the summary. R13
+			// asks for both, so neither has to be reconstructed from the other.
+			columns = append(columns,
+				col(base + "_values", "String", p.name + " (per well)", true))
+			columns = append(columns,
+				col(base + "_disagrees", "String", p.name + " disagrees", true))
+			for s in SUMMARIES {
+				columns = append(columns,
+					col(base + "_" + s, "Double", p.name + " " + s, s == SUMMARY_SHOWN))
+			}
+		}
+	}
+
+	return {
+		axes: [{ column: "variantKey", spec: axisSpec }],
+		columns: columns,
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
+export {
+	axisSpec: axisSpec,
+	settings: settings
+}

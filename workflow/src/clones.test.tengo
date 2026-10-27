@@ -1,0 +1,243 @@
+test := import("@platforma-sdk/workflow-tengo:test")
+clones := import(":clones")
+
+// {{Plate}}_{{Chain}}_{{Well}}.ab1, as the model compiles it.
+SPEC := {
+	regex: `^([^/]+?)_([^/]+?)_([^/]+?)\.ab1$`,
+	groups: { plate: 1, chain: 2, well: 3 }
+}
+
+trace := func(path) {
+	return { handle: path, path: path }
+}
+
+TestOneWellWithTwoChainsIsOneClone := func() {
+	out := clones.group([trace("Plate1_IGH_A1.ab1"), trace("Plate1_IGL_A1.ab1")], SPEC)
+	test.isEqual(1, len(out))
+	test.isEqual("Plate1", out[0].plate)
+	test.isEqual("A1", out[0].well)
+	test.isEqual(2, out[0].fileCount)
+	test.isEqual(1, out[0].chains["IGH"])
+	test.isEqual(1, out[0].chains["IGL"])
+}
+
+TestSameWellOnTwoPlatesIsTwoClones := func() {
+	out := clones.group([trace("Plate1_IGH_A1.ab1"), trace("Plate2_IGH_A1.ab1")], SPEC)
+	test.isEqual(2, len(out))
+	test.isEqual("Plate1", out[0].plate)
+	test.isEqual("Plate2", out[1].plate)
+}
+
+TestClonesKeepFirstSeenOrder := func() {
+	out := clones.group([trace("Plate1_IGH_H12.ab1"), trace("Plate1_IGH_A1.ab1")], SPEC)
+	test.isEqual("H12", out[0].well)
+	test.isEqual("A1", out[1].well)
+}
+
+TestAnUnmatchedTraceMakesNoClone := func() {
+	out := clones.group([trace("Plate1_IGH_A1.ab1"), trace("nonsense.txt")], SPEC)
+	test.isEqual(1, len(out))
+	test.isEqual(1, out[0].fileCount)
+}
+
+TestNoSpecMeansNoClones := func() {
+	test.isEqual(0, len(clones.group([trace("Plate1_IGH_A1.ab1")], undefined)))
+}
+
+TestNoTracesMeansNoClones := func() {
+	test.isEqual(0, len(clones.group([], SPEC)))
+}
+
+TestUnmatchedReportsThePathsThePatternMissed := func() {
+	out := clones.unmatched([trace("Plate1_IGH_A1.ab1"), trace("nonsense.txt")], SPEC)
+	test.isEqual(1, len(out))
+	test.isEqual("nonsense.txt", out[0])
+}
+
+TestWithoutASpecEverythingIsUnmatched := func() {
+	out := clones.unmatched([trace("Plate1_IGH_A1.ab1")], undefined)
+	test.isEqual(1, len(out))
+}
+
+key := func(plate, well) {
+	return plate + "\u0000" + well
+}
+
+elisa := func(pairs) {
+	return [{ name: "elisa", type: "Double", values: pairs }]
+}
+
+TestNormalizeWellIgnoresZeroPadding := func() {
+	test.isEqual("A1", clones.normalizeWell("A01"))
+	test.isEqual("A1", clones.normalizeWell("A1"))
+	test.isEqual("H12", clones.normalizeWell(" h012 "))
+}
+
+TestNormalizeWellLeavesANonWellAlone := func() {
+	test.isEqual("chamber-3", clones.normalizeWell(" chamber-3 "))
+}
+
+TestAttachPutsAValueOnItsClone := func() {
+	cs := clones.group([trace("Plate1_IGH_A1.ab1")], SPEC)
+	vals := {}
+	vals[key("Plate1", "A1")] = "2.538"
+	out := clones.attach(cs, elisa(vals))
+	test.isEqual("2.538", out.clones[0].properties["elisa"])
+	test.isEqual(0, len(out.clonesWithout))
+}
+
+TestAttachMatchesAcrossZeroPadding := func() {
+	cs := clones.group([trace("Plate1_IGH_A01.ab1")], SPEC)
+	vals := {}
+	vals[key("Plate1", "A1")] = "2.538"
+	out := clones.attach(cs, elisa(vals))
+	test.isEqual("2.538", out.clones[0].properties["elisa"])
+}
+
+TestTheSameWellOnAnotherPlateIsNotTheSameClone := func() {
+	cs := clones.group([trace("Plate1_IGH_A1.ab1")], SPEC)
+	vals := {}
+	vals[key("Plate2", "A1")] = "2.538"
+	out := clones.attach(cs, elisa(vals))
+	test.isEqual(true, is_undefined(out.clones[0].properties))
+	test.isEqual(1, len(out.clonesWithout))
+}
+
+TestACloneNoPropertyReachedIsReported := func() {
+	cs := clones.group([trace("Plate1_IGH_A1.ab1"), trace("Plate1_IGH_A2.ab1")], SPEC)
+	vals := {}
+	vals[key("Plate1", "A1")] = "2.538"
+	out := clones.attach(cs, elisa(vals))
+	test.isEqual(1, len(out.clonesWithout))
+	test.isEqual("Plate1 A2", out.clonesWithout[0])
+}
+
+TestNoPropertiesLeavesEverythingAlone := func() {
+	cs := clones.group([trace("Plate1_IGH_A1.ab1")], SPEC)
+	out := clones.attach(cs, [])
+	test.isEqual(true, is_undefined(out.clones[0].properties))
+	test.isEqual(0, len(out.clonesWithout))
+}
+
+TestASheetRowThatReachedNoTraceIsReported := func() {
+	cs := clones.group([trace("Plate1_IGH_A1.ab1")], SPEC)
+	vals := {}
+	vals[key("Plate1", "A1")] = "2.538"
+	vals[key("Plate1", "B7")] = "0.081"
+	vals[key("Plate9", "A1")] = "1.004"
+	out := clones.attach(cs, elisa(vals))
+	test.isEqual(["Plate1 B7", "Plate9 A1"], out.valuesWithoutClone)
+}
+
+// {{Plate}}_{{Chain}}_{{Direction}}_{{Well}}.ab1, the shape the merge plan needs.
+PAIRED_SPEC := {
+	regex: `^([^/]+?)_([^/]+?)_([^/]+?)_([^/]+?)\.ab1$`,
+	groups: { plate: 1, chain: 2, direction: 3, well: 4 }
+}
+
+idTrace := func(id, path) {
+	return { id: id, handle: path, path: path }
+}
+
+TestForwardAndReverseBecomeOneMolecule := func() {
+	out := clones.molecules([
+		idTrace("t0", "Plate1_IGH_F_A1.ab1"),
+		idTrace("t1", "Plate1_IGH_R_A1.ab1")
+	], PAIRED_SPEC, "plateWell")
+	test.isEqual(1, len(out))
+	test.isEqual("IGH", out[0].chain)
+	test.isEqual("t0", out[0].forward)
+	test.isEqual("t1", out[0].reverse)
+	test.isEqual(0, out[0].extra)
+}
+
+TestTwoChainsInOneWellAreTwoMolecules := func() {
+	out := clones.molecules([
+		idTrace("t0", "Plate1_IGH_F_A1.ab1"),
+		idTrace("t1", "Plate1_IGL_F_A1.ab1")
+	], PAIRED_SPEC, "plateWell")
+	test.isEqual(2, len(out))
+	test.isEqual("IGH", out[0].chain)
+	test.isEqual("IGL", out[1].chain)
+}
+
+TestAMoleculeWithOnlyAReverseReadKeepsIt := func() {
+	out := clones.molecules([idTrace("t0", "Plate1_IGH_R_A1.ab1")], PAIRED_SPEC, "plateWell")
+	test.isEqual(1, len(out))
+	test.isTrue(is_undefined(out[0].forward))
+	test.isEqual("t0", out[0].reverse)
+}
+
+TestASecondReadOfTheSameEndIsCountedNotUsed := func() {
+	out := clones.molecules([
+		idTrace("t0", "Plate1_IGH_F_A1.ab1"),
+		idTrace("t1", "Plate1_IGH_F_A1.ab1")
+	], PAIRED_SPEC, "plateWell")
+	test.isEqual(1, len(out))
+	test.isEqual("t0", out[0].forward)
+	test.isEqual(1, out[0].extra)
+}
+
+TestWithoutADirectionGroupTheFirstReadStandsAlone := func() {
+	out := clones.molecules([
+		idTrace("t0", "Plate1_IGH_A1.ab1"),
+		idTrace("t1", "Plate1_IGL_A1.ab1")
+	], SPEC, "plateWell")
+	test.isEqual(2, len(out))
+	test.isEqual("t0", out[0].forward)
+	test.isTrue(is_undefined(out[0].reverse))
+}
+
+TestReadEndAcceptsTheUsualSpellings := func() {
+	test.isEqual("forward", clones.readEnd("F"))
+	test.isEqual("forward", clones.readEnd("fwd"))
+	test.isEqual("reverse", clones.readEnd(" Rev "))
+	test.isEqual("reverse", clones.readEnd("2"))
+	test.isEqual("", clones.readEnd("inner"))
+}
+
+TestPairKeyOnPlateAndWellHoldsBothChains := func() {
+	out := clones.molecules([
+		idTrace("t0", "Plate1_IGH_F_A1.ab1"),
+		idTrace("t1", "Plate1_IGL_F_A1.ab1")
+	], PAIRED_SPEC, "plateWell")
+	test.isEqual(2, len(out))
+	test.isEqual(out[0].pairKey, out[1].pairKey)
+}
+
+TestPairKeyOnPlateAndWellSeparatesWells := func() {
+	out := clones.molecules([
+		idTrace("t0", "Plate1_IGH_F_A1.ab1"),
+		idTrace("t1", "Plate1_IGH_F_A2.ab1")
+	], PAIRED_SPEC, "plateWell")
+	test.isTrue(out[0].pairKey != out[1].pairKey)
+}
+
+TestPairKeyOnTheNameIsTheSharedStem := func() {
+	out := clones.molecules([
+		idTrace("t0", "Plate1_IGH_F_A1.ab1"),
+		idTrace("t1", "Plate1_IGL_F_A1.ab1")
+	], PAIRED_SPEC, "name")
+	test.isEqual(out[0].pairKey, out[1].pairKey)
+}
+
+TestPairKeyOnTheNameKeepsOtherNamesApart := func() {
+	out := clones.molecules([
+		idTrace("t0", "Plate1_IGH_F_A1.ab1"),
+		idTrace("t1", "Plate1_IGH_F_A2.ab1")
+	], PAIRED_SPEC, "name")
+	test.isTrue(out[0].pairKey != out[1].pairKey)
+}
+
+// {{Plate}}_{{Well}}.ab1 — a set that never says which chain a file holds.
+NO_CHAIN_SPEC := {
+	regex: `^([^/]+?)_([^/]+?)\.ab1$`,
+	groups: { plate: 1, well: 2 }
+}
+
+TestWithoutAChainTokenNameModeFallsBackToTheWell := func() {
+	out := clones.molecules([idTrace("t0", "Plate1_A1.ab1")], NO_CHAIN_SPEC, "name")
+	test.isEqual("Plate1\u0000A1", out[0].pairKey)
+}
+
+

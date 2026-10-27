@@ -1,0 +1,288 @@
+regexp := import("@platforma-sdk/workflow-tengo:regexp")
+text := import("text")
+
+wellRe := regexp.compile(`^([A-Za-z]+)0*([0-9]+)$`)
+
+// A clone is one well of one plate: the same well number recurs on every plate,
+// so neither alone identifies it.
+// Must match the UI's key exactly, since properties arrive keyed by it.
+cloneKey := func(plate, well) {
+	return plate + "\u0000" + well
+}
+
+// Groups traces into the clones they came from, in first-seen order.
+//
+// `traces` are {handle, path} pairs; `spec` carries the regex the model compiled
+// from the scientist's pattern and which capture group holds which field. A trace
+// the regex does not match contributes no clone — it is reported separately.
+group := func(traces, spec) {
+	if is_undefined(spec) || is_undefined(traces) || len(traces) == 0 {
+		return []
+	}
+
+	re := regexp.compile(spec.regex)
+	byKey := {}
+	order := []
+
+	for t in traces {
+		// `find` returns one entry per match, each an array of the whole match
+		// followed by its groups, so group N lives at index N of entry 0.
+		found := re.find(t.path, 1)
+		if is_undefined(found) || len(found) == 0 {
+			continue
+		}
+		m := found[0]
+
+		at := func(idx) {
+			if is_undefined(idx) || idx >= len(m) {
+				return ""
+			}
+			return m[idx].text
+		}
+
+		plate := at(spec.groups.plate)
+		well := at(spec.groups.well)
+		chain := at(spec.groups.chain)
+		key := cloneKey(plate, well)
+
+		clone := byKey[key]
+		if is_undefined(clone) {
+			clone = { plate: plate, well: well, chains: {}, fileCount: 0 }
+			byKey[key] = clone
+			order = append(order, key)
+		}
+		clone.chains[chain] = (is_undefined(clone.chains[chain]) ? 0 : clone.chains[chain]) + 1
+		clone.fileCount = clone.fileCount + 1
+	}
+
+	clones := []
+	for key in order {
+		clones = append(clones, byKey[key])
+	}
+	return clones
+}
+
+// The traces the pattern did not match. They are carried rather than dropped: a
+// file nobody can place is a result, not an absence.
+unmatched := func(traces, spec) {
+	if is_undefined(traces) || len(traces) == 0 {
+		return []
+	}
+	if is_undefined(spec) {
+		paths := []
+		for t in traces {
+			paths = append(paths, t.path)
+		}
+		return paths
+	}
+
+	re := regexp.compile(spec.regex)
+	out := []
+	for t in traces {
+		found := re.find(t.path, 1)
+		if is_undefined(found) || len(found) == 0 {
+			out = append(out, t.path)
+		}
+	}
+	return out
+}
+
+// A1 and A01 are one well, so a sheet written either way reaches the same clone.
+normalizeWell := func(w) {
+	t := text.trim_space(w)
+	m := wellRe.find(t, 1)
+	if is_undefined(m) || len(m) == 0 {
+		return t
+	}
+	return text.to_upper(m[0][1].text) + m[0][2].text
+}
+
+sortStrings := func(items) {
+	out := copy(items)
+	for i := 1; i < len(out); i++ {
+		v := out[i]
+		j := i - 1
+		for j >= 0 && out[j] > v {
+			out[j + 1] = out[j]
+			j--
+		}
+		out[j + 1] = v
+	}
+	return out
+}
+
+// Attaches the mapped properties to the clones they belong to.
+//
+// A property arrives as a column of values keyed on plate and well, already
+// mapped and typed in the UI. Every value is carried as it stands, under the
+// name it arrived with; nothing is summarised, because a molecule's wells are
+// not collapsed until later.
+//
+// A clone no property reached is reported rather than given a value. An absent
+// reading and a poor one are different results and must not share a cell.
+attach := func(clones, properties) {
+	if is_undefined(properties) || len(properties) == 0 {
+		return { clones: clones, clonesWithout: [], valuesWithoutClone: [] }
+	}
+
+	clonesWithout := []
+	reached := {}
+	for c in clones {
+		key := cloneKey(c.plate, normalizeWell(c.well))
+		got := false
+		for p in properties {
+			v := p.values[key]
+			if !is_undefined(v) {
+				if is_undefined(c.properties) {
+					c.properties = {}
+				}
+				c.properties[p.name] = v
+				got = true
+			}
+		}
+		if got {
+			reached[key] = true
+		} else {
+			clonesWithout = append(clonesWithout, c.plate + " " + c.well)
+		}
+	}
+
+	// A sheet row that landed on no trace is a result too: usually a well the
+	// scientist measured but never sequenced, or a plate named two ways.
+	valuesWithoutClone := []
+	seen := {}
+	for p in properties {
+		for key, _ in p.values {
+			if is_undefined(reached[key]) && is_undefined(seen[key]) {
+				seen[key] = true
+				parts := text.split(key, "\u0000")
+				valuesWithoutClone = append(valuesWithoutClone, text.trim_space(parts[0] + " " + parts[1]))
+			}
+		}
+	}
+
+	// Map iteration has no order in Tengo, so the list is sorted to keep the run
+	// reproducible.
+	return {
+		clones: clones,
+		clonesWithout: clonesWithout,
+		valuesWithoutClone: sortStrings(valuesWithoutClone)
+	}
+}
+
+
+// Which end of the molecule a captured direction names. Anything else is a read
+// whose direction the set does not state, and such a read stands alone.
+forwardValues := { "f": true, "fwd": true, "forward": true, "1": true }
+reverseValues := { "r": true, "rev": true, "reverse": true, "2": true }
+
+readEnd := func(direction) {
+	d := text.to_lower(text.trim_space(direction))
+	if forwardValues[d] == true {
+		return "forward"
+	}
+	if reverseValues[d] == true {
+		return "reverse"
+	}
+	return ""
+}
+
+// What holds two chains together as one clone.
+//
+//   plateWell  the same plate and well. The default.
+//   name       the file name with the chain part blanked out, the shared stem.
+//              Blanked rather than cut, so the rest of the name stays aligned.
+//
+// A set filed one directory per chain pairs on plateWell once the pattern reads
+// the real plate out of the folder, which is what the optional `[_a|_b]` section
+// in the name pattern is for.
+//
+// A declared order is the fourth way R18 names it. It is not implemented: an
+// order has to be stated by the scientist, and there is nothing in this block
+// for them to state it with yet. Two lists of the same length are exactly what
+// R19 says is not a declaration.
+pairKeyOf := func(mode, plate, well, path, chain) {
+	if mode == "name" && chain != "" {
+		return text.replace(path, chain, "\u0000", -1)
+	}
+	return plate + "\u0000" + well
+}
+
+// The merge plan: one molecule per plate, well and chain, naming the reads that
+// should become it, and the key that will pair it with the other chain.
+//
+// Traces must carry `id` as well as `path`; the ids are what the driver stages
+// the files under. A second trace claiming an end another already holds is
+// counted rather than used, because nothing here can say which of the two the
+// scientist meant.
+molecules := func(traces, spec, pairingMode) {
+	if is_undefined(spec) || is_undefined(traces) || len(traces) == 0 {
+		return []
+	}
+
+	re := regexp.compile(spec.regex)
+	byKey := {}
+	order := []
+
+	for t in traces {
+		found := re.find(t.path, 1)
+		if is_undefined(found) || len(found) == 0 {
+			continue
+		}
+		m := found[0]
+
+		at := func(idx) {
+			if is_undefined(idx) || idx >= len(m) {
+				return ""
+			}
+			return m[idx].text
+		}
+
+		plate := at(spec.groups.plate)
+		well := at(spec.groups.well)
+		chain := at(spec.groups.chain)
+		key := plate + "\u0000" + well + "\u0000" + chain
+
+		mol := byKey[key]
+		if is_undefined(mol) {
+			mol = {
+				plate: plate,
+				well: well,
+				chain: chain,
+				extra: 0,
+				pairKey: pairKeyOf(pairingMode, plate, well, t.path, chain)
+			}
+			byKey[key] = mol
+			order = append(order, key)
+		}
+
+		end := readEnd(at(spec.groups.direction))
+		if end == "forward" && is_undefined(mol.forward) {
+			mol.forward = t.id
+		} else if end == "reverse" && is_undefined(mol.reverse) {
+			mol.reverse = t.id
+		} else if end == "" && is_undefined(mol.forward) && is_undefined(mol.reverse) {
+			// No direction in the pattern, or a value neither end claims. The
+			// read still makes a molecule; it just cannot be paired.
+			mol.forward = t.id
+		} else {
+			mol.extra = mol.extra + 1
+		}
+	}
+
+	out := []
+	for key in order {
+		out = append(out, byKey[key])
+	}
+	return out
+}
+
+export {
+	group: group,
+	molecules: molecules,
+	pairKeyOf: pairKeyOf,
+	readEnd: readEnd,
+	unmatched: unmatched,
+	normalizeWell: normalizeWell,
+	attach: attach
+}

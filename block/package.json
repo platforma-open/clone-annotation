@@ -1,0 +1,65 @@
+{
+  "name": "@platforma-open/milaboratories.clone-annotation.block",
+  "version": "1.0.0",
+  "files": [
+    "dist",
+    "block-pack"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "sources": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "ts-builder build --target block-facade && block-tools pack",
+    "check": "ts-builder type-check --target block-facade",
+    "prepublishOnly": "block-tools publish -r s3://milab-euce1-prod-pkgs-s3-block-registry/pub/releases/?region=eu-central-1 --registry-serve-url https://blocks.pl-open.science",
+    "do-pack": "shx rm -f package.tgz && pnpm pack && shx mv *.tgz package.tgz"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@milaboratories/ts-builder": "catalog:",
+    "@milaboratories/ts-configs": "catalog:",
+    "@platforma-open/milaboratories.clone-annotation.kind": "workspace:*",
+    "@platforma-open/milaboratories.clone-annotation.model": "workspace:*",
+    "@platforma-open/milaboratories.clone-annotation.ui": "workspace:*",
+    "@platforma-open/milaboratories.clone-annotation.workflow": "workspace:*",
+    "@platforma-sdk/block-tools": "catalog:",
+    "@platforma-sdk/model": "catalog:",
+    "shx": "catalog:",
+    "typescript": "catalog:"
+  },
+  "block": {
+    "components": {
+      "workflow": "@platforma-open/milaboratories.clone-annotation.workflow/dist/tengo/tpl/main.plj.gz",
+      "model": "@platforma-open/milaboratories.clone-annotation.model/dist/model.json",
+      "ui": "@platforma-open/milaboratories.clone-annotation.ui/dist"
+    },
+    "meta": {
+      "title": "Clone Annotation",
+      "description": "Takes the sequencing files of individually picked clones, in whatever form they arrived, and returns annotated sequences with their plate and well identity and a quality assessment.",
+      "longDescription": "file:../docs/description.md",
+      "logo": "file:logos/block-logo.png",
+      "organization": {
+        "name": "MiLaboratories Inc",
+        "url": "https://milaboratories.com",
+        "logo": "file:logos/organization-logo.png"
+      },
+      "changelog": "file:CHANGELOG.md",
+      "url": "https://github.com/platforma-open/clone-annotation",
+      "support": "mailto:support@milaboratories.com",
+      "tags": [
+        "upstream",
+        "sanger",
+        "trace",
+        "antibody"
+      ]
+    }
+  }
+}

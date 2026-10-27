@@ -1,0 +1,277 @@
+// The shape this block puts in the result pool.
+//
+// One frame. The record key is axis 0, because downstream sequence selectors
+// match axes positionally and an output keyed otherwise is never offered to
+// them. The two chains of a paired record are separated by the
+// `pl7.app/vdj/scClonotypeChain` column domain, never by an axis and never by a
+// second frame. Only abundance carries the sample axis.
+
+maps := import("@platforma-sdk/workflow-tengo:maps")
+strings := import("@platforma-sdk/workflow-tengo:strings")
+
+CHAINS := ["IGHeavy", "IGLight"]
+SIDE := { IGHeavy: "heavy", IGLight: "light" }
+LABEL := { IGHeavy: "Heavy", IGLight: "Light" }
+PAIRED_DOMAIN := { IGHeavy: "A", IGLight: "B" }
+RECEPTOR := "IG"
+
+FEATURES := ["VDJRegion", "FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"]
+ALPHABETS := { aa: "aminoacid", nt: "nucleotide" }
+GENES := { vGene: "VGene", dGene: "DGene", jGene: "JGene" }
+
+a := func(priority, visibility, extra) {
+	return maps.merge({
+		"pl7.app/table/orderPriority": priority,
+		"pl7.app/table/visibility": visibility
+	}, extra)
+}
+
+chainDomain := func(chain) {
+	return {
+		"pl7.app/vdj/scClonotypeChain": PAIRED_DOMAIN[chain],
+		"pl7.app/vdj/scClonotypeChain/index": "primary"
+	}
+}
+
+keyAxis := func(blockId) {
+	return {
+		column: "variantKey",
+		naRegex: "",
+		spec: {
+			type: "String",
+			name: "pl7.app/variantKey",
+			domain: {
+				"pl7.app/vdj/receptor": RECEPTOR,
+				"pl7.app/vdj/clonotypingRunId": blockId
+			},
+			annotations: {
+				"pl7.app/label": "Variant Id",
+				"pl7.app/table/fontFamily": "monospace",
+				"pl7.app/table/visibility": "default",
+				"pl7.app/table/orderPriority": "110000",
+				"pl7.app/segmentedBy": "[\"pl7.app/vdj/clonotypingRunId\"]"
+			}
+		}
+	}
+}
+
+// The plate. A variant seen on two plates carries a count for each.
+sampleAxis := func(blockId) {
+	return {
+		column: "sampleId",
+		spec: {
+			type: "String",
+			name: "pl7.app/sampleId",
+			domain: { "pl7.app/blockId": blockId },
+			annotations: { "pl7.app/label": "Plate" }
+		}
+	}
+}
+
+sequenceColumns := func() {
+	columns := []
+	priority := 46900
+	for chain in CHAINS {
+		for f in FEATURES {
+			for short, alphabet in ALPHABETS {
+				// The whole domain in amino acids is what a reader means by
+				// "the sequence", so it is the one marked as such.
+				main := f == "VDJRegion" && short == "aa"
+				extra := {
+					"pl7.app/label": LABEL[chain] + " " + f + " " + short,
+					"pl7.app/table/fontFamily": "monospace"
+				}
+				if main {
+					extra["pl7.app/vdj/isMainSequence"] = "true"
+					extra["pl7.app/vdj/isAssemblingFeature"] = "true"
+				}
+				columns = append(columns, {
+					column: SIDE[chain] + "_" + short + "_" + f,
+					allowNA: true,
+					spec: {
+						name: "pl7.app/vdj/sequence",
+						valueType: "String",
+						domain: maps.merge({
+							"pl7.app/alphabet": alphabet,
+							"pl7.app/vdj/feature": f
+						}, chainDomain(chain)),
+						annotations: a(string(priority),
+							main || f == "CDR3" ? "default" : "optional", extra)
+					}
+				})
+				priority = priority - 10
+			}
+		}
+	}
+	return columns
+}
+
+geneColumns := func() {
+	columns := []
+	priority := 45000
+	for chain in CHAINS {
+		for column, reference in GENES {
+			columns = append(columns, {
+				column: SIDE[chain] + "_" + column,
+				allowNA: true,
+				spec: {
+					name: "pl7.app/vdj/geneHit",
+					valueType: "String",
+					domain: maps.merge({ "pl7.app/vdj/reference": reference },
+						chainDomain(chain)),
+					annotations: a(string(priority), "default", {
+						"pl7.app/label": LABEL[chain] + " " + reference,
+						"pl7.app/isDiscreteFilter": "true"
+					})
+				}
+			})
+			priority = priority - 10
+		}
+	}
+	return columns
+}
+
+// No vocabulary covers "could these two chains be held together", so the name
+// is this block's own. It is a discrete filter, which is how a consumer keeps
+// the ambiguous records out without this block having dropped them.
+pairingColumn := func() {
+	return {
+		column: "pairStatus",
+		allowNA: true,
+		spec: {
+			name: "pl7.app/vdj/clonePairing",
+			valueType: "String",
+			domain: {},
+			annotations: a("44000", "default", {
+				"pl7.app/label": "Pairing",
+				"pl7.app/isDiscreteFilter": "true"
+			})
+		}
+	}
+}
+
+wellsColumn := func() {
+	return {
+		column: "wells",
+		allowNA: true,
+		spec: {
+			name: "pl7.app/label",
+			valueType: "String",
+			domain: {},
+			annotations: a("109000", "default", { "pl7.app/label": "Wells" })
+		}
+	}
+}
+
+abundanceColumn := func() {
+	return {
+		column: "wellCount",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/vdj/uniqueMoleculeCount",
+			valueType: "Long",
+			domain: {},
+			annotations: a("88000", "default", {
+				"pl7.app/label": "Wells",
+				"pl7.app/min": "1",
+				"pl7.app/isAbundance": "true",
+				"pl7.app/abundance/unit": "molecules",
+				"pl7.app/abundance/normalized": "false",
+				"pl7.app/abundance/isPrimary": "true",
+				"pl7.app/isAnchor": "true"
+			})
+		}
+	}
+}
+
+// Each sheet column travels as the summaries of the wells behind the variant,
+// plus the values as they stand and whether those wells disagreed.
+propertyColumns := func(properties) {
+	columns := []
+	if is_undefined(properties) {
+		return columns
+	}
+	for i, p in properties {
+		token := strings.substituteSpecialCharacters(p.name)
+		base := "prop_" + string(i)
+		columns = append(columns, {
+			column: base + "_values",
+			allowNA: true,
+			spec: {
+				name: "pl7.app/vdj/importedProperty/" + token,
+				valueType: "String",
+				domain: { "pl7.app/vdj/importedProperty/summary": "perWell" },
+				annotations: a("43000", "default",
+					{ "pl7.app/label": p.name + " (per well)" })
+			}
+		})
+		columns = append(columns, {
+			column: base + "_disagrees",
+			allowNA: true,
+			spec: {
+				name: "pl7.app/vdj/importedProperty/" + token,
+				valueType: "String",
+				domain: { "pl7.app/vdj/importedProperty/summary": "disagrees" },
+				annotations: a("42900", "optional", {
+					"pl7.app/label": p.name + " disagrees",
+					"pl7.app/isDiscreteFilter": "true"
+				})
+			}
+		})
+		if p.type != "String" {
+			for s in ["min", "median", "max", "mean"] {
+				columns = append(columns, {
+					column: base + "_" + s,
+					allowNA: true,
+					spec: {
+						name: "pl7.app/vdj/importedProperty/" + token,
+						valueType: "Double",
+						domain: { "pl7.app/vdj/importedProperty/summary": s },
+						annotations: a("42800", s == "max" ? "default" : "optional",
+							{ "pl7.app/label": p.name + " " + s })
+					}
+				})
+			}
+		}
+	}
+	return columns
+}
+
+// Tengo's `append` takes values, not a spliced array, so each group is folded
+// in one at a time.
+addAll := func(into, more) {
+	for item in more {
+		into = append(into, item)
+	}
+	return into
+}
+
+variantSettings := func(blockId, properties) {
+	columns := [wellsColumn(), pairingColumn()]
+	columns = addAll(columns, sequenceColumns())
+	columns = addAll(columns, geneColumns())
+	columns = addAll(columns, propertyColumns(properties))
+	return {
+		axes: [keyAxis(blockId)],
+		columns: columns,
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
+// Partitioned on the plate axis. A consumer that splits this column addresses the
+// plate by its partition key, and an unpartitioned column has the single empty key
+// `[]`, so index 0 does not exist and the split yields nothing.
+abundanceSettings := func(blockId) {
+	return {
+		axes: [sampleAxis(blockId), keyAxis(blockId)],
+		columns: [abundanceColumn()],
+		storageFormat: "Parquet",
+		partitionKeyLength: 1
+	}
+}
+
+export {
+	variantSettings: variantSettings,
+	abundanceSettings: abundanceSettings
+}

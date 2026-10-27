@@ -1,0 +1,103 @@
+test := import("@platforma-sdk/workflow-tengo:test")
+exportSpecs := import(":export-specs")
+
+// Two chains, eight features, two alphabets.
+SEQUENCE_COLUMNS := 32
+// Two chains, V, D and J.
+GENE_COLUMNS := 6
+// Wells and pairing.
+FIXED_COLUMNS := 2
+
+countOf := func(settings, name) {
+	n := 0
+	for c in settings.columns {
+		if c.spec.name == name {
+			n++
+		}
+	}
+	return n
+}
+
+TestVariantSettingsBuildEveryColumn := func() {
+	s := exportSpecs.variantSettings("blk", undefined)
+	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + FIXED_COLUMNS, len(s.columns))
+	test.isEqual(SEQUENCE_COLUMNS, countOf(s, "pl7.app/vdj/sequence"))
+	test.isEqual(GENE_COLUMNS, countOf(s, "pl7.app/vdj/geneHit"))
+}
+
+TestTheRecordKeyIsTheOnlyAxis := func() {
+	s := exportSpecs.variantSettings("blk", undefined)
+	test.isEqual(1, len(s.axes))
+	test.isEqual("pl7.app/variantKey", s.axes[0].spec.name)
+}
+
+TestTheChainsAreSeparatedByDomainNotByAxis := func() {
+	s := exportSpecs.variantSettings("blk", undefined)
+	sides := {}
+	for c in s.columns {
+		if c.spec.name == "pl7.app/vdj/sequence" {
+			sides[c.spec.domain["pl7.app/vdj/scClonotypeChain"]] = true
+		}
+	}
+	test.isEqual(true, sides["A"])
+	test.isEqual(true, sides["B"])
+}
+
+TestAPropertyBringsItsValuesAndItsSummaries := func() {
+	props := [{ name: "elisa", type: "Double", values: {} }]
+	s := exportSpecs.variantSettings("blk", props)
+	// values, disagrees, and four summaries.
+	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + FIXED_COLUMNS + 6, len(s.columns))
+}
+
+TestALabelGetsNoSummaries := func() {
+	props := [{ name: "note", type: "String", values: {} }]
+	s := exportSpecs.variantSettings("blk", props)
+	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + FIXED_COLUMNS + 2, len(s.columns))
+}
+
+TestAbundanceCarriesTheSampleAxisFirst := func() {
+	s := exportSpecs.abundanceSettings("blk")
+	test.isEqual(2, len(s.axes))
+	test.isEqual("pl7.app/sampleId", s.axes[0].spec.name)
+	test.isEqual("pl7.app/variantKey", s.axes[1].spec.name)
+	test.isEqual(1, len(s.columns))
+}
+
+// A consumer splits the abundance column on the plate axis. An unpartitioned
+// column has the single empty key `[]`, so index 0 does not exist there.
+TestAbundanceIsPartitionedOnThePlateAxis := func() {
+	test.isEqual(1, exportSpecs.abundanceSettings("blk").partitionKeyLength)
+}
+
+TestVariantColumnsAreNotPartitioned := func() {
+	test.isEqual(0, exportSpecs.variantSettings("blk", undefined).partitionKeyLength)
+}
+
+// makeTrace eats its first argument as the upstream trace, so a source block
+// that passes only its step gets an empty one and every consumer falls back to
+// the anchor column's own label.
+pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
+
+TestASourceBlockTraceIsNotEmpty := func() {
+	trace := pSpec.makeTrace({}, { type: "t", id: "b", importance: 30, label: "My Set" })
+	test.isEqual(1, len(trace.value))
+	test.isEqual("My Set", trace.value[0].label)
+}
+
+TestTheTraceReachesTheColumnSpec := func() {
+	trace := pSpec.makeTrace({}, { type: "t", id: "b", importance: 30, label: "My Set" })
+	// `inject` takes a whole p-column spec, which the xsv settings only become
+	// once imported, so the shape is built here rather than borrowed.
+	spec := {
+		kind: "PColumn",
+		name: "pl7.app/vdj/sequence",
+		valueType: "String",
+		domain: {},
+		axesSpec: [],
+		annotations: { "pl7.app/label": "Wells" }
+	}
+	injected := trace.inject(spec)
+	test.isTrue(injected.annotations["pl7.app/trace"] != "[]")
+	test.isTrue(injected.annotations["pl7.app/trace"] != undefined)
+}

@@ -1,0 +1,308 @@
+wf := import("@platforma-sdk/workflow-tengo:workflow")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+file := import("@platforma-sdk/workflow-tengo:file")
+fmt := import("fmt")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
+pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
+xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
+clones := import(":clones")
+cloneCols := import(":clone-cols")
+moleculeCols := import(":molecule-cols")
+variantCols := import(":variant-cols")
+exportSpecs := import(":export-specs")
+tracy := import(":tracy")
+
+// Phred 20 is the conventional Sanger floor: one wrong base in a hundred.
+defaultQualityThreshold := 20
+defaultScheme := "imgt"
+defaultSpecies := "hsa"
+
+wf.setPreRun(assets.importTemplate(":prerun"))
+
+wf.body(func(args) {
+	fileImports := {}
+
+	traces := args.traces
+	if is_undefined(traces) {
+		traces = []
+	}
+
+	// Traces are staged under generated ids, not their own names: a path holds
+	// separators and whatever characters the sequencing service used. The
+	// manifest carries the real path back into the report.
+	manifest := {}
+	blobs := {}
+	withIds := []
+	for i, t in traces {
+		imp := file.importFile(t.handle)
+		fileImports[t.handle] = imp.handle
+
+		id := fmt.sprintf("t%05d", i)
+		manifest[id] = t.path
+		blobs[id] = imp.file
+		withIds = append(withIds, { id: id, path: t.path })
+	}
+
+	grouped := clones.group(traces, args.patternSpec)
+	joined := clones.attach(grouped, args.properties)
+
+	exports := {}
+	blockId := wf.blockId().getDataAsJson()
+	outputs := {
+		fileImports: fileImports,
+		clones: joined.clones,
+		unmatched: clones.unmatched(traces, args.patternSpec),
+		clonesWithoutProperties: joined.clonesWithout,
+		valuesWithoutClone: joined.valuesWithoutClone
+	}
+
+	if len(traces) > 0 {
+		threshold := args.qualityThreshold
+		if is_undefined(threshold) {
+			threshold = defaultQualityThreshold
+		}
+
+		// One molecule per plate, well and chain, naming the reads that should
+		// become it. Built here rather than in the driver so the pattern is read
+		// in one place.
+		plan := clones.molecules(withIds, args.patternSpec, args.pairingMode)
+
+		tracySw := assets.importSoftware("@platforma-open/milaboratories.software-tracy:main")
+
+		// One job for the whole plate. Tracy reads one file per run, so the
+		// driver loops inside the job rather than the workflow scheduling one
+		// job per well.
+		run := exec.builder().
+			software(tracySw).
+			writeFile(tracy.driverName, tracy.driverScript).
+			writeFile(tracy.manifestName, manifest).
+			writeFile(tracy.planName, plan).
+			mkDir(tracy.callsDir).
+			arg(tracy.driverName).
+			arg(tracy.tracesDir).
+			arg(tracy.callsDir).
+			arg(tracy.manifestName).
+			arg(string(threshold)).
+			arg(tracy.planName).
+			saveFileSet("calls", tracy.callsDir + "/.*\\.fastq").
+			saveFile(tracy.reportName).
+			saveFile(tracy.framesName).
+			saveFile(tracy.nucleotideName).
+			saveFileContent(tracy.reportName).
+			inMediumQueue()
+
+		for id, blob in blobs {
+			run.addFile(tracy.tracesDir + "/" + id, blob)
+		}
+
+		result := run.run()
+		outputs.traceReport = result.getFileContent(tracy.reportName)
+
+		scheme := args.numberingScheme
+		if is_undefined(scheme) {
+			scheme = defaultScheme
+		}
+		species := args.species
+		if is_undefined(species) {
+			species = defaultSpecies
+		}
+
+		anarciSw := assets.importSoftware("@platforma-open/milaboratories.software-anarci:main")
+		mixcrSw := assets.importSoftware("@platforma-open/milaboratories.software-mixcr:main")
+		annotateSw := assets.importSoftware("@platforma-open/milaboratories.clone-annotation.software:annotate")
+
+		// ANARCI recognises a variable domain by its shape, so it needs no
+		// reference. The six frames go in and the one that is a domain comes
+		// back numbered, which is how the reading frame is found.
+		// The placeholders matter: ANARCI writes no file at all when it can
+		// number nothing, and the step would then fail on a missing output.
+		anarci := exec.builder().
+			software(anarciSw).
+			addFile(tracy.framesName, result.getFile(tracy.framesName)).
+			arg("-i").arg(tracy.framesName).
+			arg("--scheme").arg(scheme).
+			arg("--ncpu").argExpr("{system.cpu}").
+			arg("-o").arg("anarci").arg("--csv").
+			writeFile("anarci_H.csv", "Id\n", { writable: true }).
+			writeFile("anarci_KL.csv", "Id\n", { writable: true }).
+			saveFile("anarci_H.csv").
+			saveFile("anarci_KL.csv").
+			printErrStreamToStdout().
+			inMediumQueue().
+			run()
+
+		// MiXCR adds the germline, and only where a library covers the
+		// material. Nothing above depends on it.
+		align := exec.builder().
+			software(mixcrSw).
+			env("MI_USE_SYSTEM_CA", "true").
+			secret("MI_LICENSE", "MI_LICENSE").
+			addFile(tracy.nucleotideName, result.getFile(tracy.nucleotideName)).
+			arg("align").
+			arg("-p").arg("generic-amplicon").
+			arg("--species").arg(species).
+			arg("--rna").
+			arg("--floating-left-alignment-boundary").
+			// The right boundary takes a required value: `J` for a J-gene
+			// primer. Passing the flag bare makes it swallow the next argument,
+			// and MiXCR then exits 2 with its usage text.
+			arg("--floating-right-alignment-boundary").arg("J").
+			arg("--assemble-clonotypes-by").arg("CDR3").
+			// Without this the FASTA header is thrown away during alignment and
+			// `-descrsR1` has nothing to export, so the join loses its key.
+			arg("-OsaveOriginalReads=true").
+			// A molecule built from one read covers one end of the domain and
+			// may stop short of CDR3. Dropping those would lose a fifth of a
+			// real plate from the germline half without saying so.
+			arg("--keep-non-CDR3-alignments").
+			arg("--threads").argExpr("{system.cpu}").
+			arg(tracy.nucleotideName).
+			arg("alignments.vdjca").
+			saveFile("alignments.vdjca").
+			printErrStreamToStdout().
+			inMediumQueue().
+			run()
+
+		// The field order here is the order annotate.py reads positionally, so
+		// whatever MiXCR calls its columns cannot break the join.
+		exported := exec.builder().
+			software(mixcrSw).
+			env("MI_USE_SYSTEM_CA", "true").
+			secret("MI_LICENSE", "MI_LICENSE").
+			addFile("alignments.vdjca", align.getFile("alignments.vdjca")).
+			arg("exportAlignments").
+			arg("-descrsR1").
+			arg("-topChains").
+			arg("-vHit").
+			arg("-dHit").
+			arg("-jHit").
+			arg("-vHitScore").
+			arg("-vAlignment").
+			arg("alignments.vdjca").
+			arg("alignments.tsv").
+			saveFile("alignments.tsv").
+			printErrStreamToStdout().
+			inMediumQueue().
+			run()
+
+		// Whether pairing applies at all is the scientist's declaration: a
+		// pattern with no chain token says the material is already one
+		// molecule, and nothing waits for a partner it never had.
+		chainsDeclared := !is_undefined(args.patternSpec) &&
+			!is_undefined(args.patternSpec.groups.chain)
+
+		annotated := exec.builder().
+			software(annotateSw).
+			addFile(tracy.reportName, result.getFile(tracy.reportName)).
+			addFile("anarci_H.csv", anarci.getFile("anarci_H.csv")).
+			addFile("anarci_KL.csv", anarci.getFile("anarci_KL.csv")).
+			addFile("alignments.tsv", exported.getFile("alignments.tsv")).
+			addFile(tracy.nucleotideName, result.getFile(tracy.nucleotideName)).
+			arg("--report").arg(tracy.reportName).
+			arg("--molecules").arg(tracy.nucleotideName).
+			arg("--scheme").arg(scheme).
+			arg("--csv_h").arg("anarci_H.csv").
+			arg("--csv_kl").arg("anarci_KL.csv").
+			arg("--mixcr").arg("alignments.tsv").
+			writeFile("properties.json", is_undefined(args.properties) ? [] : args.properties).
+			arg("--properties").arg("properties.json").
+			arg("--out").arg("annotation.json").
+			arg("--out_tsv").arg("clones.tsv").
+			arg("--out_molecules_tsv").arg("molecules.tsv").
+			arg("--out_variants_tsv").arg("variants.tsv").
+			arg("--out_abundance_tsv").arg("abundance.tsv").
+			saveFileContent("annotation.json").
+			saveFile("clones.tsv").
+			saveFile("molecules.tsv").
+			saveFile("variants.tsv").
+			saveFile("abundance.tsv").
+			printErrStreamToStdout().
+			inMediumQueue()
+
+		if chainsDeclared {
+			annotated.arg("--chains-declared")
+		}
+
+		annotatedRun := annotated.run()
+
+		outputs.annotation = annotatedRun.getFileContent("annotation.json")
+
+		// The same rows as p-columns, so the page can use the platform's table
+		// with its filtering, sorting and column chooser.
+		imported := xsv.importFile(
+			annotatedRun.getFile("clones.tsv"), "tsv",
+			cloneCols.settings(args.properties),
+			{ splitDataAndSpec: true }
+		)
+
+		// `splitDataAndSpec` hands back a map of {spec, data} pairs. The frame
+		// builder is what turns those into the `<id>.spec` / `<id>.data` fields
+		// an exported p-frame is made of.
+		clonesBuilder := pframes.pFrameBuilder()
+		for id, column in imported {
+			clonesBuilder.add(id, column.spec, column.data)
+		}
+		outputs.clonesTable = pframes.exportFrame(clonesBuilder.build())
+
+		moleculesBuilder := pframes.pFrameBuilder()
+		for id, column in xsv.importFile(
+			annotatedRun.getFile("molecules.tsv"), "tsv",
+			moleculeCols.settings(), { splitDataAndSpec: true }
+		) {
+			moleculesBuilder.add(id, column.spec, column.data)
+		}
+		outputs.moleculesTable = pframes.exportFrame(moleculesBuilder.build())
+
+		variantsBuilder := pframes.pFrameBuilder()
+		for id, column in xsv.importFile(
+			annotatedRun.getFile("variants.tsv"), "tsv",
+			variantCols.settings(args.properties), { splitDataAndSpec: true }
+		) {
+			variantsBuilder.add(id, column.spec, column.data)
+		}
+		outputs.variantsTable = pframes.exportFrame(variantsBuilder.build())
+
+		// What leaves the block. One frame, the record key on axis 0, and the
+		// plate carried only under abundance.
+		//
+		// The trace is what names the dataset everywhere downstream. Without it
+		// a consumer falls back to the anchor column's own label, so the set
+		// shows up called after whatever that column happens to be.
+		label := args.name
+		if is_undefined(label) || label == "" {
+			label = "Clone Annotation"
+		}
+		// makeTrace eats its first argument as the upstream trace and treats
+		// only the rest as steps. This block has no upstream, so an empty map
+		// stands in; passing the step alone silently produces an empty trace.
+		trace := pSpec.makeTrace({}, {
+			type: "milaboratories.clone-annotation",
+			id: blockId,
+			importance: 30,
+			label: label
+		})
+
+		toPool := pframes.pFrameBuilder()
+		for id, column in xsv.importFile(
+			annotatedRun.getFile("variants.tsv"), "tsv",
+			exportSpecs.variantSettings(blockId, args.properties),
+			{ splitDataAndSpec: true }
+		) {
+			toPool.add("variant." + id, trace.inject(column.spec), column.data)
+		}
+		for id, column in xsv.importFile(
+			annotatedRun.getFile("abundance.tsv"), "tsv",
+			exportSpecs.abundanceSettings(blockId),
+			{ splitDataAndSpec: true }
+		) {
+			toPool.add("abundance." + id, trace.inject(column.spec), column.data)
+		}
+		exports.variants = toPool.build()
+	}
+
+	return {
+		outputs: outputs,
+		exports: exports
+	}
+})

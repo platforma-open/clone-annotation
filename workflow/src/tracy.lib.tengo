@@ -1,0 +1,264 @@
+// A conda artifact has no root field, so the Tracy package cannot carry this
+// script. It is written into the working directory with writeFile().
+driverScript := `"""Read a plate's traces and merge each molecule, in one job.
+
+Tracy takes one file per basecall and one pair per consensus, so a plate is one
+subprocess per well. The point of running python as the entrypoint is that those
+runs share a single scheduled job.
+
+Usage: basecall_plate.py <traces-dir> <calls-dir> <manifest.json> <floor> <plan.json>
+"""
+
+import json
+import pathlib
+import subprocess
+import sys
+
+# A usable stretch shorter than this holds no variable domain, so there is
+# nothing for annotation to describe. Not a knob: the scientist sets the quality
+# floor, and this only decides when the answer is "nothing left".
+MIN_USABLE = 100
+
+
+def tracy(*args):
+    """Run tracy. check=False on purpose: a truncated ABIF file aborts it with
+    exit 134 and an uncaught C++ exception, and one bad trace must not end the
+    plate."""
+    done = subprocess.run(["tracy", *[str(a) for a in args]],
+                          capture_output=True, text=True)
+    if done.returncode == 0:
+        return None
+    message = (done.stderr or done.stdout).strip().splitlines()
+    return message[-1] if message else "tracy exited %d" % done.returncode
+
+
+def read_fastq(path):
+    lines = path.read_text().splitlines() if path.exists() else []
+    return (lines[1], lines[3]) if len(lines) >= 4 else None
+
+
+def mean_quality(qual):
+    return round(sum(ord(c) - 33 for c in qual) / len(qual), 1) if qual else 0.0
+
+
+def longest_run(quality, floor):
+    """Start and end of the longest stretch at or above the floor."""
+    best_start = best_end = run_start = 0
+    for i, q in enumerate(quality + [-1]):
+        if q < floor:
+            if i - run_start > best_end - best_start:
+                best_start, best_end = run_start, i
+            run_start = i + 1
+    return best_start, best_end
+
+
+def basecall_all(traces, calls, manifest, floor):
+    reads, set_aside = {}, []
+    for trace_id in sorted(manifest):
+        path = manifest[trace_id]
+        raw = calls / (trace_id + ".raw")
+        reason = tracy("basecall", "-f", "fastq", "-o", raw, traces / trace_id)
+        record = read_fastq(raw) if reason is None else None
+        raw.unlink(missing_ok=True)
+        if record is None:
+            set_aside.append({"path": path, "reason": reason or "tracy wrote no sequence"})
+            continue
+
+        sequence, qual = record
+        start, end = longest_run([ord(c) - 33 for c in qual], floor)
+        read = {
+            "id": trace_id,
+            "path": path,
+            "length": len(qual),
+            "usableLength": end - start,
+            "meanQuality": mean_quality(qual[start:end]),
+            "kept": end - start >= MIN_USABLE,
+        }
+        reads[trace_id] = read
+        if not read["kept"]:
+            set_aside.append({
+                "path": path,
+                "reason": "only %d bases reach Q%d" % (end - start, floor),
+            })
+            continue
+        (calls / (trace_id + ".fastq")).write_text(
+            "@%s\n%s\n+\n%s\n" % (path, sequence[start:end], qual[start:end])
+        )
+    return reads, set_aside
+
+
+def tidy(calls, mol_id):
+    """tracy consensus writes .fa, .txt, .align.fa and two _1st/_2nd traces
+    beside the .fq, on a failed merge as well as a good one. Only the fastq
+    travels on."""
+    for leftover in calls.glob(mol_id + "*"):
+        if leftover.name != mol_id + ".fastq":
+            leftover.unlink()
+
+
+def count_mismatches(path):
+    """Columns where both reads are present and disagree."""
+    if not path.exists():
+        return None
+    rows = [r for r in path.read_text().split(">")[1:]]
+    if len(rows) != 2:
+        return None
+    a, b = ["".join(r.splitlines()[1:]) for r in rows]
+    return sum(1 for x, y in zip(a, b) if x != "-" and y != "-" and x != y)
+
+
+def merge(plan, traces, calls, reads):
+    """One molecule per plan entry. A molecule whose reads will not merge keeps
+    the better single read rather than disappearing."""
+    molecules = []
+    for index, entry in enumerate(plan):
+        mol_id = "m%05d" % index
+        ends = {}
+        for end in ("forward", "reverse"):
+            trace_id = entry.get(end)
+            if trace_id is not None and reads.get(trace_id, {}).get("kept"):
+                ends[end] = trace_id
+
+        molecule = {
+            "id": mol_id,
+            "plate": entry.get("plate", ""),
+            "well": entry.get("well", ""),
+            "chain": entry.get("chain", ""),
+            "pairKey": entry.get("pairKey", ""),
+            "extraReads": entry.get("extra", 0),
+        }
+
+        reason = "only one read"
+        if len(ends) == 2:
+            out = calls / mol_id
+            reason = tracy("consensus", "-o", out,
+                           traces / ends["forward"], traces / ends["reverse"])
+            record = read_fastq(pathlib.Path(str(out) + ".fq")) if reason is None else None
+            if record is not None:
+                sequence, qual = record
+                molecule.update({
+                    "source": "merged",
+                    "reads": [reads[t]["path"] for t in ends.values()],
+                    "length": len(sequence),
+                    "meanQuality": mean_quality(qual),
+                    # Tracy recomputes quality for a consensus on its own scale,
+                    # which tops out near Q26. A single read carries the
+                    # instrument's, which reaches Q60. They do not compare.
+                    "qualityScale": "consensus",
+                    "mismatches": count_mismatches(pathlib.Path(str(out) + ".align.fa")),
+                })
+                molecules.append(molecule)
+                (calls / (mol_id + ".fastq")).write_text(
+                    "@%s\n%s\n+\n%s\n" % (mol_id, sequence, qual))
+                tidy(calls, mol_id)
+                continue
+            tidy(calls, mol_id)
+
+        if not ends:
+            molecule.update({"source": "none", "reads": [], "reason": "no read survived"})
+            molecules.append(molecule)
+            continue
+
+        end = max(ends, key=lambda e: reads[ends[e]]["usableLength"])
+        read = reads[ends[end]]
+        record = read_fastq(calls / (ends[end] + ".fastq"))
+        molecule.update({
+            "source": end,
+            "reads": [read["path"]],
+            "length": read["usableLength"],
+            "meanQuality": read["meanQuality"],
+            "qualityScale": "read",
+            "reason": reason,
+        })
+        molecules.append(molecule)
+        if record is not None:
+            (calls / (mol_id + ".fastq")).write_text(
+                "@%s\n%s\n+\n%s\n" % (mol_id, record[0], record[1]))
+    return molecules
+
+
+CODONS = {}
+_BASES = "TCAG"
+_AMINO = "FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG"
+for _i, _aa in enumerate(_AMINO):
+    CODONS[_BASES[_i // 16] + _BASES[_i // 4 % 4] + _BASES[_i % 4]] = _aa
+
+COMPLEMENT = str.maketrans("ACGTNacgtn", "TGCANtgcan")
+
+# A frame shorter than this cannot hold a variable domain, so it is not worth
+# an HMM scan.
+MIN_PROTEIN = 50
+
+
+def translate(nucleotide):
+    return "".join(
+        CODONS.get(nucleotide[i : i + 3].upper(), "X")
+        for i in range(0, len(nucleotide) - 2, 3)
+    )
+
+
+def write_fastas(molecules, calls, frames_out, molecules_out):
+    """The nucleotide for MiXCR, and all six proteins for ANARCI.
+
+    ANARCI reads protein and recognises a variable domain by its shape, so the
+    frame a molecule is actually in is the one it can number. Offering all six
+    is what finds the frame without a germline reference, and that is what keeps
+    regions working for material no reference library covers.
+    """
+    frames, nucleotides = [], []
+    for molecule in molecules:
+        record = read_fastq(calls / (molecule["id"] + ".fastq"))
+        if record is None:
+            continue
+        sequence = record[0]
+        nucleotides.append(">%s\n%s\n" % (molecule["id"], sequence))
+        reverse = sequence.translate(COMPLEMENT)[::-1]
+        for frame in range(6):
+            protein = translate((sequence if frame < 3 else reverse)[frame % 3 :])
+            if len(protein) >= MIN_PROTEIN:
+                frames.append(">%s|%d\n%s\n" % (molecule["id"], frame, protein))
+    frames_out.write_text("".join(frames))
+    molecules_out.write_text("".join(nucleotides))
+
+
+def main(argv):
+    traces = pathlib.Path(argv[1])
+    calls = pathlib.Path(argv[2])
+    manifest = json.loads(pathlib.Path(argv[3]).read_text())
+    floor = int(argv[4])
+    plan = json.loads(pathlib.Path(argv[5]).read_text())
+    calls.mkdir(parents=True, exist_ok=True)
+
+    reads, set_aside = basecall_all(traces, calls, manifest, floor)
+    molecules = merge(plan, traces, calls, reads)
+
+    for trace_id in reads:
+        (calls / (trace_id + ".fastq")).unlink(missing_ok=True)
+
+    write_fastas(molecules, calls, pathlib.Path("frames.fasta"),
+                 pathlib.Path("molecules.fasta"))
+
+    pathlib.Path("report.json").write_text(json.dumps({
+        "reads": sorted(reads.values(), key=lambda r: r["path"]),
+        "setAside": sorted(set_aside, key=lambda s: s["path"]),
+        "molecules": molecules,
+    }, indent=2))
+    # Always 0. A trace that failed is a result, not a broken job.
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
+`
+
+export {
+	driverScript: driverScript,
+	driverName: "basecall_plate.py",
+	tracesDir: "traces",
+	callsDir: "calls",
+	manifestName: "traces.json",
+	planName: "molecules.json",
+	reportName: "report.json",
+	framesName: "frames.fasta",
+	nucleotideName: "molecules.fasta"
+}
