@@ -16,6 +16,8 @@ export type SelectedFile = {
   /** Path below the common root, which is what the pattern matches against. */
   relativePath: string;
   match?: PathPatternMatch;
+  /** Why the pattern did not match, when it did not. */
+  reason?: string;
 };
 
 /** Pairs each selected file with what the pattern captured, or nothing if it did not match. */
@@ -27,7 +29,9 @@ export function describeSelection(
   return handles.map((handle) => {
     const path = getFilePathFromHandle(handle);
     const relativePath = pathTail(path, segments);
-    return { handle, path, relativePath, match: pattern?.match(relativePath) };
+    const match = pattern?.match(relativePath);
+    const reason = pattern && !match ? pattern.explain(relativePath) : undefined;
+    return { handle, path, relativePath, match, reason };
   });
 }
 

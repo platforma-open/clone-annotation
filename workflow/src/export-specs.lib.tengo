@@ -168,6 +168,8 @@ abundanceColumn := func() {
 		column: "wellCount",
 		allowNA: false,
 		spec: {
+			// Platform-wide names, shared with every other block that reports an
+			// abundance. They keep "molecule" where this block says "sequence".
 			name: "pl7.app/vdj/uniqueMoleculeCount",
 			valueType: "Long",
 			domain: {},

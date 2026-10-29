@@ -77,16 +77,16 @@ export type TraceRead = {
 /** A trace that produced nothing usable, and why. */
 export type SetAsideTrace = { path: string; reason: string };
 
-/** Where a molecule's sequence came from. `none` means no read survived. */
-export type MoleculeSource = "merged" | "forward" | "reverse" | "none";
+/** Where a sequence's bases came from. `none` means no read survived. */
+export type SequenceSource = "merged" | "forward" | "reverse" | "none";
 
 /** One plate, well and chain, as one sequence. */
-export type Molecule = {
+export type Sequence = {
   id: string;
   plate: string;
   well: string;
   chain: string;
-  source: MoleculeSource;
+  source: SequenceSource;
   /** The files behind it, by the path the table shows. */
   reads: string[];
   /** Reads of an end another read already held. They are counted, never used. */
@@ -99,9 +99,9 @@ export type Molecule = {
    * reaches Q60. The two do not compare, so the scale travels with the number.
    */
   qualityScale?: "consensus" | "read";
-  /** Positions where the two reads disagreed. Only a merged molecule has one. */
+  /** Positions where the two reads disagreed. Only a merged sequence has one. */
   mismatches?: number | null;
-  /** Why the molecule is not merged. */
+  /** Why the sequence is not merged. */
   reason?: string;
 };
 
@@ -109,7 +109,7 @@ export type Molecule = {
 export const FEATURES = ["VDJRegion", "FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"] as const;
 export type Feature = (typeof FEATURES)[number];
 
-/** What the two annotators made of one clone. */
+/** What the two annotators made of one sequence. */
 export type Annotation = {
   id: string;
   plate: string;
@@ -120,7 +120,7 @@ export type Annotation = {
   frame?: number;
   /** What holds this clone's two chains together. */
   pairKey?: string;
-  pairStatus?: "Paired" | "Single domain" | "Unpaired" | "Ambiguous";
+  pairStatus?: "Paired" | "Single domain" | "Unpaired" | "Ambiguous" | "No sequence";
   /** The other chain of the same clone, by its key. */
   pairedWith?: string;
   /** The name says one chain and the sequence reads as another. */
@@ -147,22 +147,22 @@ export type Annotation = {
 export type AnnotationReport = {
   scheme: string;
   annotations: Annotation[];
-  /** Clones ANARCI could not number. They are not failed clones, only undescribed. */
+  /** Sequences ANARCI could not number. They are not failed, only undescribed. */
   notNumbered: string[];
-  /** Clones no germline reference reached. Everything else about them stands. */
+  /** Sequences no germline reference reached. Everything else about them stands. */
   notAligned: string[];
-  /** Clones whose chains could not be held together, rather than paired by guess. */
+  /** Sequences held to no partner, rather than paired by guess. */
   unpaired: string[];
-  /** Clones whose file name asserts one chain and whose sequence reads as another. */
+  /** Sequences whose file name asserts one chain and whose bases read as another. */
   chainMismatch: string[];
   /** What the collapse did, stated rather than left to be counted off the table. */
-  collapse?: { moleculesIn?: number; variantsOut?: number };
+  collapse?: { clonesIn?: number; variantsOut?: number };
 };
 
 export type TraceReport = {
   reads: TraceRead[];
   setAside: SetAsideTrace[];
-  molecules: Molecule[];
+  sequences: Sequence[];
 };
 
 /**
@@ -178,6 +178,9 @@ export type PropertyMapping = {
   propertyColumns: string[];
 };
 
+/** The three tables the Results page holds, one per tab. */
+export type ResultsTab = "sequences" | "clones" | "variants";
+
 export type BlockData = BlockParams & {
   /** What the scientist calls this set. */
   name: string;
@@ -191,12 +194,16 @@ export type BlockData = BlockParams & {
   propertyMapping?: PropertyMapping;
   /** The mapped result. What travels to the workflow, not the file. */
   properties: Property[];
-  /** Which columns the clone table shows, how it is sorted and filtered. */
-  tableState: PlDataTableStateV2;
-  /** The same, for the molecule table. */
-  moleculeTableState: PlDataTableStateV2;
+  /** Which columns the sequence table shows, how it is sorted and filtered. */
+  sequenceTableState: PlDataTableStateV2;
+  /** The same, for the clone table. */
+  cloneTableState: PlDataTableStateV2;
   /** The same, for the variant table. */
   variantTableState: PlDataTableStateV2;
+  /** Which of the three result tables is open. */
+  resultsTab?: ResultsTab;
+  /** Which plate the QC map draws. Falls back to the first where the plate is gone. */
+  qcPlate?: string;
 };
 
 function splitSegments(path: string): string[] {
@@ -209,26 +216,44 @@ export function pathTail(path: string, segments: number): string {
   return seg.slice(Math.max(0, seg.length - segments)).join("/");
 }
 
-function tracesWithPaths(data: BlockData) {
-  let segments = 1;
-  try {
-    if (data.namePattern) segments = PathPattern.parse(data.namePattern).segmentCount;
-  } catch {
-    segments = 1;
-  }
-  return (data.traceFiles ?? []).map((handle) => ({
-    handle,
-    path: pathTail(getFilePathFromHandle(handle), segments),
-  }));
-}
-
-function compileSpec(pattern: string | undefined) {
+function parsePattern(pattern: string | undefined): PathPattern | undefined {
   if (!pattern || pattern.trim() === "") return undefined;
   try {
-    return PathPattern.parse(pattern).compiled;
+    return PathPattern.parse(pattern);
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Each trace with the fields its path gave, or no fields if the pattern missed it.
+ * The pattern is matched here and only here: defaults and the agreement between
+ * two copies of a field are not something a regex says, and the workflow's regexp
+ * panics on a group an absent `[ ]` section left out.
+ */
+function tracesWithFields(data: BlockData, pattern: PathPattern | undefined) {
+  const segments = pattern?.segmentCount ?? 1;
+  return (data.traceFiles ?? []).map((handle) => {
+    const path = pathTail(getFilePathFromHandle(handle), segments);
+    const m = pattern?.match(path);
+    const fields = m && {
+      plate: m.plate?.value ?? "",
+      well: m.well.value,
+      chain: m.chain?.value ?? "",
+      direction: m.direction?.value ?? "",
+    };
+    return { handle, path, fields };
+  });
+}
+
+function declaredFields(pattern: PathPattern | undefined) {
+  return (
+    pattern && {
+      plate: pattern.hasPlate,
+      chain: pattern.hasChain,
+      direction: pattern.hasDirection,
+    }
+  );
 }
 
 /** The field exists only once the block has run on a set that holds files. */
@@ -239,8 +264,8 @@ const dataModel = new DataModelBuilder({ kind }).from<BlockData>("v1").init(({ p
   name: DEFAULT_NAME,
   traceFiles: [],
   properties: [],
-  tableState: createPlDataTableStateV2(),
-  moleculeTableState: createPlDataTableStateV2(),
+  sequenceTableState: createPlDataTableStateV2(),
+  cloneTableState: createPlDataTableStateV2(),
   variantTableState: createPlDataTableStateV2(),
   qualityThreshold: DEFAULT_QUALITY_THRESHOLD,
   numberingScheme: "imgt",
@@ -254,17 +279,20 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   // here so the path rule exists once rather than in both TypeScript and Tengo.
   .prerunArgs((data) => ({ propertyFile: data.propertyFile }))
 
-  .args((data) => ({
-    name: data.name,
-    traces: tracesWithPaths(data),
-    properties: data.properties,
-    namePattern: data.namePattern,
-    patternSpec: compileSpec(data.namePattern),
-    qualityThreshold: data.qualityThreshold,
-    numberingScheme: data.numberingScheme,
-    pairingMode: data.pairingMode,
-    species: data.species,
-  }))
+  .args((data) => {
+    const pattern = parsePattern(data.namePattern);
+    return {
+      name: data.name,
+      traces: tracesWithFields(data, pattern),
+      properties: data.properties,
+      namePattern: data.namePattern,
+      declaredFields: declaredFields(pattern),
+      qualityThreshold: data.qualityThreshold,
+      numberingScheme: data.numberingScheme,
+      pairingMode: data.pairingMode,
+      species: data.species,
+    };
+  })
 
   // Reads from the main run, not prerun, so nothing uploads until the block is
   // run. getImportProgress() is the side effect that starts each transfer, and
@@ -334,44 +362,44 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   )
 
   /**
-   * The clone table as p-columns. The page renders it with the platform's own
+   * The sequence table as p-columns. The page renders it with the platform's own
    * table, which brings filtering, sorting and the column chooser with it.
    */
+  .outputWithStatus("sequencesTable", (ctx): PlDataTableModel | undefined => {
+    const acc = ctx.outputs?.resolve({ field: "sequencesTable", allowPermanentAbsence: true });
+    if (acc === undefined) return undefined;
+    const provider = AccessorColumnsProvider(acc);
+    // Every column we emit is keyed on the sequence axis, so any of them anchors
+    // the table. `well` is the one that is never empty.
+    const anchor = provider
+      .getColumns()
+      .find((c) => c.getSpec().name === "pl7.app/vdj/sequence/well")
+      ?.getSpec();
+    if (anchor === undefined) return undefined;
+    return createPlDataTableV3(ctx, {
+      // maxHops 0: the frame is self-contained, so no linker chains to follow.
+      columns: { sources: [provider], anchors: { main: anchor }, selector: { maxHops: 0 } },
+      tableState: ctx.data.sequenceTableState,
+    });
+  })
+
+  /** One row per clone: its two chains side by side. */
   .outputWithStatus("clonesTable", (ctx): PlDataTableModel | undefined => {
     const acc = ctx.outputs?.resolve({ field: "clonesTable", allowPermanentAbsence: true });
     if (acc === undefined) return undefined;
     const provider = AccessorColumnsProvider(acc);
-    // Every column we emit is keyed on the clone axis, so any of them anchors
-    // the table. `well` is the one that is never empty.
     const anchor = provider
       .getColumns()
       .find((c) => c.getSpec().name === "pl7.app/vdj/clone/well")
       ?.getSpec();
     if (anchor === undefined) return undefined;
     return createPlDataTableV3(ctx, {
-      // maxHops 0: the frame is self-contained, so no linker chains to follow.
       columns: { sources: [provider], anchors: { main: anchor }, selector: { maxHops: 0 } },
-      tableState: ctx.data.tableState,
+      tableState: ctx.data.cloneTableState,
     });
   })
 
-  /** One row per molecule: a clone's two chains side by side. */
-  .outputWithStatus("moleculesTable", (ctx): PlDataTableModel | undefined => {
-    const acc = ctx.outputs?.resolve({ field: "moleculesTable", allowPermanentAbsence: true });
-    if (acc === undefined) return undefined;
-    const provider = AccessorColumnsProvider(acc);
-    const anchor = provider
-      .getColumns()
-      .find((c) => c.getSpec().name === "pl7.app/vdj/molecule/well")
-      ?.getSpec();
-    if (anchor === undefined) return undefined;
-    return createPlDataTableV3(ctx, {
-      columns: { sources: [provider], anchors: { main: anchor }, selector: { maxHops: 0 } },
-      tableState: ctx.data.moleculeTableState,
-    });
-  })
-
-  /** One row per distinct molecule, with every well it was seen in. */
+  /** One row per distinct clone, with every well it was seen in. */
   .outputWithStatus("variantsTable", (ctx): PlDataTableModel | undefined => {
     const acc = ctx.outputs?.resolve({ field: "variantsTable", allowPermanentAbsence: true });
     if (acc === undefined) return undefined;
@@ -387,7 +415,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     });
   })
 
-  /** Regions from ANARCI and germline from MiXCR, joined onto each clone. */
+  /** Regions from ANARCI and germline from MiXCR, joined onto each sequence. */
   .output("annotation", (ctx) =>
     ctx.outputs?.resolve(ANNOTATION)?.getDataAsJsonOrUndefined<AnnotationReport>(),
   )
@@ -411,19 +439,12 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     return n === 1 ? "1 trace" : `${n} traces`;
   })
 
-  // The clones list only exists once the block has run, so its section appears then.
-  .sections((ctx) => [
+  // Always offered, so a block that has not run yet shows where the results
+  // will appear rather than hiding it.
+  .sections(() => [
     { type: "link" as const, href: "/" as const, label: "Files" },
-    // Always offered, so a block that has not run yet shows the table empty
-    // rather than hiding where the results will appear.
-    { type: "link" as const, href: "/clones" as const, label: "Clones" },
-    { type: "link" as const, href: "/molecules" as const, label: "Molecules" },
-    { type: "link" as const, href: "/variants" as const, label: "Variants" },
-    // Unplaced stays conditional: it is an exception list, and an empty one
-    // would read as a problem on a set where every file was placed.
-    ...((ctx.outputs?.resolve("unmatched")?.getDataAsJson<string[]>()?.length ?? 0) > 0
-      ? [{ type: "link" as const, href: "/unmatched" as const, label: "Unplaced" }]
-      : []),
+    { type: "link" as const, href: "/results" as const, label: "Results" },
+    { type: "link" as const, href: "/qc" as const, label: "QC" },
   ])
   .done();
 

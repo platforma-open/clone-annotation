@@ -1,8 +1,8 @@
-"""Join what ANARCI numbered and what MiXCR aligned onto each molecule.
+"""Join what ANARCI numbered and what MiXCR aligned onto each sequence.
 
 The two run independently. ANARCI finds the reading frame and the chain from the
 shape of the sequence, so regions survive with no reference at all; MiXCR adds
-the germline, and only when a reference covers the material. A molecule MiXCR
+the germline, and only when a reference covers the material. A sequence MiXCR
 could not place keeps everything ANARCI gave it.
 
 Usage: annotate.py --report report.json --scheme imgt --out annotation.json
@@ -59,7 +59,7 @@ def pair_up(annotations, declared):
     """Hold a clone's two chains together, and say so when they cannot be.
 
     `declared` is whether the set states a chain at all. Where it does not, the
-    material is already one molecule and nothing is held up waiting for a
+    material is already one sequence and nothing is held up waiting for a
     partner it was never going to have (R20).
     """
     # A set that names no chain, or names only one across every file, holds no
@@ -94,7 +94,7 @@ def pair_up(annotations, declared):
         elif len(candidates) == 2 and classes[0] != classes[1]:
             for one, other in ((candidates[0], candidates[1]), (candidates[1], candidates[0])):
                 one["pairStatus"] = PAIRED
-                one["pairedWith"] = clone_key(other)
+                one["pairedWith"] = sequence_key(other)
         elif len(candidates) > 1:
             # Two of the same chain, or more than two. Pairing one of them with
             # a neighbour would be a guess.
@@ -212,24 +212,24 @@ def read_mixcr(path):
         if not row:
             continue
         record = {name: row[i] if i < len(row) else "" for name, i in where.items()}
-        # `descrsR1` carries the FASTA header, which is the molecule id.
+        # `descrsR1` carries the FASTA header, which is the sequence id.
         key = record["id"].split()
         if key:
             out[key[0]] = record
     return out
 
 
-def pick_frame(mol_id, by_bucket):
+def pick_frame(seq_id, by_bucket):
     """The frame and bucket ANARCI numbered best.
 
     Six frames go in and at most one is a variable domain, so the winner is the
-    frame the molecule is actually in. That is the reading frame decided by
+    frame the sequence is actually in. That is the reading frame decided by
     shape rather than by a reference.
     """
     best = None
     for bucket, numbering in by_bucket.items():
         for frame in range(6):
-            found = numbering.get("%s|%d" % (mol_id, frame))
+            found = numbering.get("%s|%d" % (seq_id, frame))
             if found is None:
                 continue
             if best is None or found[2] > best[3]:
@@ -237,17 +237,17 @@ def pick_frame(mol_id, by_bucket):
     return best
 
 
-# A clone is one plate, one well, one chain. The same key the p-frame axis uses.
-def clone_key(entry):
+# A sequence is one plate, one well, one chain. The same key the p-frame axis uses.
+def sequence_key(entry):
     return "|".join([entry["plate"], entry["well"], entry["declaredChain"]])
 
 
-def write_table(path, annotations, molecules, properties):
-    """One row per clone, flat, ready for xsv to turn into p-columns."""
-    by_id = {m["id"]: m for m in molecules}
+def write_sequences(path, annotations, sequences, properties):
+    """One row per sequence, flat, ready for xsv to turn into p-columns."""
+    by_id = {m["id"]: m for m in sequences}
     names = [p["name"] for p in properties]
     header = (
-        ["cloneKey", "plate", "well", "chain", "pairStatus", "pairedWith", "chainMismatch",
+        ["sequenceKey", "plate", "well", "chain", "pairStatus", "pairedWith", "chainMismatch",
          "source", "length", "meanQuality", "qualityScale", "mismatches", "extraReads",
          "note", "regionStatus", "observedChain", "frame", "vGene", "dGene", "jGene",
          "mixcrChains", "vAlignment"]
@@ -260,19 +260,19 @@ def write_table(path, annotations, molecules, properties):
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
         writer.writerow(header)
         for entry in annotations:
-            molecule = by_id.get(entry["id"], {})
+            sequence = by_id.get(entry["id"], {})
             amino = entry.get("aa", {})
             bases = entry.get("nt", {})
             # The sheet measures a well, so both chains of one well carry it.
             well_key = entry["plate"] + "\u0000" + entry["well"]
             writer.writerow(
-                [clone_key(entry), entry["plate"], entry["well"], entry["declaredChain"],
+                [sequence_key(entry), entry["plate"], entry["well"], entry["declaredChain"],
                  entry.get("pairStatus", ""), entry.get("pairedWith", ""),
                  "yes" if entry.get("chainMismatch") else "",
-                 molecule.get("source", ""), molecule.get("length", ""),
-                 molecule.get("meanQuality", ""), molecule.get("qualityScale", ""),
-                 molecule.get("mismatches") if molecule.get("mismatches") is not None else "",
-                 molecule.get("extraReads", ""), molecule.get("reason", ""),
+                 sequence.get("source", ""), sequence.get("length", ""),
+                 sequence.get("meanQuality", ""), sequence.get("qualityScale", ""),
+                 sequence.get("mismatches") if sequence.get("mismatches") is not None else "",
+                 sequence.get("extraReads", ""), sequence.get("reason", ""),
                  entry.get("status", ""), entry.get("observedChain", ""),
                  entry.get("frame", ""), entry.get("vGene", ""), entry.get("dGene", ""),
                  entry.get("jGene", ""), entry.get("mixcrChains", ""),
@@ -283,18 +283,18 @@ def write_table(path, annotations, molecules, properties):
             )
 
 
-# Which side of the molecule a chain class sits on. For a T-cell receptor the
+# Which side of the clone a chain class sits on. For a T-cell receptor the
 # heavy side is beta or delta and the light side alpha or gamma; the per-side
 # chain column carries whatever the files actually called it.
 SIDES = {"H": "heavy", "B": "heavy", "D": "heavy",
          "KL": "light", "A": "light", "G": "light"}
 
-# Mirrored on both sides of a molecule. Identity stays unprefixed.
+# Mirrored on both sides of a clone. Identity stays unprefixed.
 PER_SIDE = ["chain", "source", "length", "meanQuality", "regionStatus",
             "vGene", "dGene", "jGene"]
 
 
-def molecule_columns():
+def clone_columns():
     cols = []
     for side in ("heavy", "light"):
         cols += ["%s_%s" % (side, f) for f in PER_SIDE]
@@ -304,7 +304,7 @@ def molecule_columns():
 
 
 def side_cells(entry, by_id):
-    """One side of a molecule, flat: its facts, then every region twice over."""
+    """One side of a clone, flat: its facts, then every region twice over."""
     m = by_id.get(entry["id"], {}) if entry else {}
     amino = (entry or {}).get("aa", {})
     bases = (entry or {}).get("nt", {})
@@ -346,16 +346,16 @@ def candidate_pairings(annotations):
     return out
 
 
-def write_molecules(path, annotations, molecules):
-    """One row per molecule: the two chains of a clone, side by side.
+def write_clones(path, annotations, sequences):
+    """One row per clone: its two chains, side by side.
 
-    R18 asks for the molecule to be what goes forward rather than its parts.
+    R18 asks for the clone to be what goes forward rather than its parts.
     A group with only one side still gets a row, with that side filled — the
     other half is missing, which is a fact about the clone, not a reason to
     leave it out.
     """
-    by_id = {m["id"]: m for m in molecules}
-    header = ["moleculeKey", "plate", "well", "pairStatus"] + molecule_columns()
+    by_id = {m["id"]: m for m in sequences}
+    header = ["cloneKey", "plate", "well", "pairStatus"] + clone_columns()
     used = set()
 
     def unique(key):
@@ -406,7 +406,7 @@ def summarise(values):
 
 
 def variant_columns(properties):
-    cols = ["wells", "wellCount", "pairStatus"] + molecule_columns()
+    cols = ["wells", "wellCount", "pairStatus"] + clone_columns()
     for i in range(len(properties)):
         cols += ["prop_%d_values" % i, "prop_%d_disagrees" % i]
         cols += ["prop_%d_%s" % (i, s) for s in ("min", "median", "max", "mean")]
@@ -446,15 +446,15 @@ def variant_key_of(pairing):
     return None if key == "\u0000" else key
 
 
-def write_variants(path, annotations, molecules, properties, counts=None):
-    """One row per distinct molecule, with every well it was seen in.
+def write_variants(path, annotations, sequences, properties, counts=None):
+    """One row per distinct clone, with every well it was seen in.
 
     Identity is the nucleotide of both chains, letter for letter, and nothing
-    looser (R17). After collapse a molecule is not in a well; it was observed
+    looser (R17). After collapse a clone is not in a well; it was observed
     in several, so the wells travel with it and so does everything measured on
     each of them (R12).
     """
-    by_id = {m["id"]: m for m in molecules}
+    by_id = {m["id"]: m for m in sequences}
     groups = {}
     for pairing in candidate_pairings(annotations):
         key = variant_key_of(pairing)
@@ -467,7 +467,7 @@ def write_variants(path, annotations, molecules, properties, counts=None):
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
         writer.writerow(header)
         if counts is not None:
-            counts["moleculesIn"] = sum(len(g) for g in groups.values())
+            counts["clonesIn"] = sum(len(g) for g in groups.values())
             counts["variantsOut"] = len(groups)
         for n, members in enumerate(sorted(groups.values(),
                                            key=lambda g: -len(g)), start=1):
@@ -483,7 +483,7 @@ def write_variants(path, annotations, molecules, properties, counts=None):
                     if v is not None and v != "":
                         seen.append(v)
                 # R15: six wells reading differently is a result in itself, and
-                # one summarised number hides it. A molecule whose wells agree
+                # one summarised number hides it. A clone whose wells agree
                 # carries no mark.
                 disagrees = "yes" if len(set(seen)) > 1 else ""
                 summary = summarise(seen)
@@ -494,16 +494,16 @@ def write_variants(path, annotations, molecules, properties, counts=None):
 
 def main(argv=None):
     p = argparse.ArgumentParser()
-    p.add_argument("--report", required=True, help="The trace report, for the molecule list")
-    p.add_argument("--molecules", required=False, help="Molecule nucleotide FASTA")
+    p.add_argument("--report", required=True, help="The trace report, for the sequence list")
+    p.add_argument("--sequences", required=False, help="Sequence nucleotide FASTA")
     p.add_argument("--scheme", required=True, choices=SCHEMES)
     p.add_argument("--mixcr", required=False, help="MiXCR exportAlignments TSV")
     p.add_argument("--out", required=True)
-    p.add_argument("--out_tsv", required=False, help="One row per clone, for the p-frame")
-    p.add_argument("--out_molecules_tsv", required=False,
-                   help="One row per molecule, the two chains side by side")
+    p.add_argument("--out_sequences_tsv", required=False, help="One row per sequence, for the p-frame")
+    p.add_argument("--out_clones_tsv", required=False,
+                   help="One row per clone, the two chains side by side")
     p.add_argument("--out_variants_tsv", required=False,
-                   help="One row per distinct molecule, with the wells behind it")
+                   help="One row per distinct clone, with the wells behind it")
     p.add_argument("--out_abundance_tsv", required=False,
                    help="Wells per plate, per variant")
     p.add_argument("--properties", required=False, help="Mapped sheet columns, as JSON")
@@ -513,35 +513,35 @@ def main(argv=None):
         p.add_argument("--csv_%s" % bucket.lower(), required=False)
     args = p.parse_args(argv)
 
-    molecules = json.loads(pathlib.Path(args.report).read_text())["molecules"]
+    sequences = json.loads(pathlib.Path(args.report).read_text())["sequences"]
     by_bucket = {b: read_anarci(getattr(args, "csv_%s" % b.lower())) for b in BUCKETS}
     aligned = read_mixcr(args.mixcr)
-    nucleotides = read_fasta(args.molecules)
+    nucleotides = read_fasta(args.sequences)
 
     annotations, not_numbered, not_aligned = [], [], []
-    for molecule in molecules:
-        mol_id = molecule["id"]
-        where = "%s %s %s" % (molecule["plate"], molecule["well"], molecule["chain"])
+    for sequence in sequences:
+        seq_id = sequence["id"]
+        where = "%s %s %s" % (sequence["plate"], sequence["well"], sequence["chain"])
         entry = {
-            "id": mol_id,
-            "plate": molecule["plate"],
-            "well": molecule["well"],
-            "declaredChain": molecule["chain"],
-            "pairKey": molecule.get("pairKey", ""),
+            "id": seq_id,
+            "plate": sequence["plate"],
+            "well": sequence["well"],
+            "declaredChain": sequence["chain"],
+            "pairKey": sequence.get("pairKey", ""),
         }
 
-        best = pick_frame(mol_id, by_bucket)
+        best = pick_frame(seq_id, by_bucket)
         if best is None:
             entry["status"] = STATUS_FAILED
-            # Only a molecule that had a sequence can fail to be numbered. One
+            # Only a sequence that produced bases can fail to be numbered. One
             # that never had a read is already accounted for upstream.
-            if molecule.get("source") != "none":
+            if sequence.get("source") != "none":
                 not_numbered.append(where.strip())
         else:
             bucket, frame, (labels, residues, _, start), _ = best
             entry["frame"] = frame
             entry["observedChain"] = bucket
-            nucleotide = nucleotides.get(mol_id)
+            nucleotide = nucleotides.get(seq_id)
             amino, bases = build_regions(
                 labels,
                 residues,
@@ -554,7 +554,7 @@ def main(argv=None):
                 entry["nt"] = bases
             entry["status"] = STATUS_ANNOTATED if any(amino.values()) else STATUS_FAILED
 
-        hit = aligned.get(mol_id)
+        hit = aligned.get(seq_id)
         if hit is not None:
             # MiXCR writes "-" where it found no hit. An absent gene is absent,
             # not a gene called "-".
@@ -564,8 +564,8 @@ def main(argv=None):
                 value = hit.get(field, "")
                 if value not in ("", "-"):
                     entry[name] = value
-        elif args.mixcr and molecule.get("source") != "none":
-            # R31: no germline is not a failed annotation. The molecule keeps its
+        elif args.mixcr and sequence.get("source") != "none":
+            # R31: no germline is not a failed annotation. The sequence keeps its
             # regions, its chain and its translation.
             not_aligned.append(where.strip())
 
@@ -576,13 +576,13 @@ def main(argv=None):
     properties = (
         json.loads(pathlib.Path(args.properties).read_text()) if args.properties else []
     )
-    if args.out_tsv:
-        write_table(args.out_tsv, annotations, molecules, properties)
-    if args.out_molecules_tsv:
-        write_molecules(args.out_molecules_tsv, annotations, molecules)
+    if args.out_sequences_tsv:
+        write_sequences(args.out_sequences_tsv, annotations, sequences, properties)
+    if args.out_clones_tsv:
+        write_clones(args.out_clones_tsv, annotations, sequences)
     collapse = {}
     if args.out_variants_tsv:
-        write_variants(args.out_variants_tsv, annotations, molecules, properties, collapse)
+        write_variants(args.out_variants_tsv, annotations, sequences, properties, collapse)
     if args.out_abundance_tsv:
         write_abundance(args.out_abundance_tsv, annotations)
 
@@ -601,7 +601,7 @@ def main(argv=None):
         )
     )
     print(
-        "%d clones, %d numbered, %d aligned"
+        "%d sequences, %d numbered, %d aligned"
         % (
             len(annotations),
             sum(1 for a in annotations if a["status"] == STATUS_ANNOTATED),

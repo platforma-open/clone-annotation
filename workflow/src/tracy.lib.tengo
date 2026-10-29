@@ -1,6 +1,6 @@
 // A conda artifact has no root field, so the Tracy package cannot carry this
 // script. It is written into the working directory with writeFile().
-driverScript := `"""Read a plate's traces and merge each molecule, in one job.
+driverScript := `"""Read a plate's traces and merge each sequence, in one job.
 
 Tracy takes one file per basecall and one pair per consensus, so a plate is one
 subprocess per well. The point of running python as the entrypoint is that those
@@ -87,12 +87,12 @@ def basecall_all(traces, calls, manifest, floor):
     return reads, set_aside
 
 
-def tidy(calls, mol_id):
+def tidy(calls, seq_id):
     """tracy consensus writes .fa, .txt, .align.fa and two _1st/_2nd traces
     beside the .fq, on a failed merge as well as a good one. Only the fastq
     travels on."""
-    for leftover in calls.glob(mol_id + "*"):
-        if leftover.name != mol_id + ".fastq":
+    for leftover in calls.glob(seq_id + "*"):
+        if leftover.name != seq_id + ".fastq":
             leftover.unlink()
 
 
@@ -108,19 +108,19 @@ def count_mismatches(path):
 
 
 def merge(plan, traces, calls, reads):
-    """One molecule per plan entry. A molecule whose reads will not merge keeps
+    """One sequence per plan entry. A sequence whose reads will not merge keeps
     the better single read rather than disappearing."""
-    molecules = []
+    sequences = []
     for index, entry in enumerate(plan):
-        mol_id = "m%05d" % index
+        seq_id = "s%05d" % index
         ends = {}
         for end in ("forward", "reverse"):
             trace_id = entry.get(end)
             if trace_id is not None and reads.get(trace_id, {}).get("kept"):
                 ends[end] = trace_id
 
-        molecule = {
-            "id": mol_id,
+        sequence = {
+            "id": seq_id,
             "plate": entry.get("plate", ""),
             "well": entry.get("well", ""),
             "chain": entry.get("chain", ""),
@@ -130,16 +130,16 @@ def merge(plan, traces, calls, reads):
 
         reason = "only one read"
         if len(ends) == 2:
-            out = calls / mol_id
+            out = calls / seq_id
             reason = tracy("consensus", "-o", out,
                            traces / ends["forward"], traces / ends["reverse"])
             record = read_fastq(pathlib.Path(str(out) + ".fq")) if reason is None else None
             if record is not None:
-                sequence, qual = record
-                molecule.update({
+                bases, qual = record
+                sequence.update({
                     "source": "merged",
                     "reads": [reads[t]["path"] for t in ends.values()],
-                    "length": len(sequence),
+                    "length": len(bases),
                     "meanQuality": mean_quality(qual),
                     # Tracy recomputes quality for a consensus on its own scale,
                     # which tops out near Q26. A single read carries the
@@ -147,22 +147,22 @@ def merge(plan, traces, calls, reads):
                     "qualityScale": "consensus",
                     "mismatches": count_mismatches(pathlib.Path(str(out) + ".align.fa")),
                 })
-                molecules.append(molecule)
-                (calls / (mol_id + ".fastq")).write_text(
-                    "@%s\n%s\n+\n%s\n" % (mol_id, sequence, qual))
-                tidy(calls, mol_id)
+                sequences.append(sequence)
+                (calls / (seq_id + ".fastq")).write_text(
+                    "@%s\n%s\n+\n%s\n" % (seq_id, bases, qual))
+                tidy(calls, seq_id)
                 continue
-            tidy(calls, mol_id)
+            tidy(calls, seq_id)
 
         if not ends:
-            molecule.update({"source": "none", "reads": [], "reason": "no read survived"})
-            molecules.append(molecule)
+            sequence.update({"source": "none", "reads": [], "reason": "no read survived"})
+            sequences.append(sequence)
             continue
 
         end = max(ends, key=lambda e: reads[ends[e]]["usableLength"])
         read = reads[ends[end]]
         record = read_fastq(calls / (ends[end] + ".fastq"))
-        molecule.update({
+        sequence.update({
             "source": end,
             "reads": [read["path"]],
             "length": read["usableLength"],
@@ -170,11 +170,11 @@ def merge(plan, traces, calls, reads):
             "qualityScale": "read",
             "reason": reason,
         })
-        molecules.append(molecule)
+        sequences.append(sequence)
         if record is not None:
-            (calls / (mol_id + ".fastq")).write_text(
-                "@%s\n%s\n+\n%s\n" % (mol_id, record[0], record[1]))
-    return molecules
+            (calls / (seq_id + ".fastq")).write_text(
+                "@%s\n%s\n+\n%s\n" % (seq_id, record[0], record[1]))
+    return sequences
 
 
 CODONS = {}
@@ -197,28 +197,28 @@ def translate(nucleotide):
     )
 
 
-def write_fastas(molecules, calls, frames_out, molecules_out):
+def write_fastas(sequences, calls, frames_out, sequences_out):
     """The nucleotide for MiXCR, and all six proteins for ANARCI.
 
     ANARCI reads protein and recognises a variable domain by its shape, so the
-    frame a molecule is actually in is the one it can number. Offering all six
+    frame a sequence is actually in is the one it can number. Offering all six
     is what finds the frame without a germline reference, and that is what keeps
     regions working for material no reference library covers.
     """
     frames, nucleotides = [], []
-    for molecule in molecules:
-        record = read_fastq(calls / (molecule["id"] + ".fastq"))
+    for sequence in sequences:
+        record = read_fastq(calls / (sequence["id"] + ".fastq"))
         if record is None:
             continue
-        sequence = record[0]
-        nucleotides.append(">%s\n%s\n" % (molecule["id"], sequence))
-        reverse = sequence.translate(COMPLEMENT)[::-1]
+        bases = record[0]
+        nucleotides.append(">%s\n%s\n" % (sequence["id"], bases))
+        reverse = bases.translate(COMPLEMENT)[::-1]
         for frame in range(6):
-            protein = translate((sequence if frame < 3 else reverse)[frame % 3 :])
+            protein = translate((bases if frame < 3 else reverse)[frame % 3 :])
             if len(protein) >= MIN_PROTEIN:
-                frames.append(">%s|%d\n%s\n" % (molecule["id"], frame, protein))
+                frames.append(">%s|%d\n%s\n" % (sequence["id"], frame, protein))
     frames_out.write_text("".join(frames))
-    molecules_out.write_text("".join(nucleotides))
+    sequences_out.write_text("".join(nucleotides))
 
 
 def main(argv):
@@ -230,18 +230,18 @@ def main(argv):
     calls.mkdir(parents=True, exist_ok=True)
 
     reads, set_aside = basecall_all(traces, calls, manifest, floor)
-    molecules = merge(plan, traces, calls, reads)
+    sequences = merge(plan, traces, calls, reads)
 
     for trace_id in reads:
         (calls / (trace_id + ".fastq")).unlink(missing_ok=True)
 
-    write_fastas(molecules, calls, pathlib.Path("frames.fasta"),
-                 pathlib.Path("molecules.fasta"))
+    write_fastas(sequences, calls, pathlib.Path("frames.fasta"),
+                 pathlib.Path("sequences.fasta"))
 
     pathlib.Path("report.json").write_text(json.dumps({
         "reads": sorted(reads.values(), key=lambda r: r["path"]),
         "setAside": sorted(set_aside, key=lambda s: s["path"]),
-        "molecules": molecules,
+        "sequences": sequences,
     }, indent=2))
     # Always 0. A trace that failed is a result, not a broken job.
     return 0
@@ -257,8 +257,8 @@ export {
 	tracesDir: "traces",
 	callsDir: "calls",
 	manifestName: "traces.json",
-	planName: "molecules.json",
+	planName: "sequences.json",
 	reportName: "report.json",
 	framesName: "frames.fasta",
-	nucleotideName: "molecules.fasta"
+	nucleotideName: "sequences.fasta"
 }

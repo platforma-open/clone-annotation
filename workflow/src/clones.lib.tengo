@@ -12,46 +12,32 @@ cloneKey := func(plate, well) {
 
 // Groups traces into the clones they came from, in first-seen order.
 //
-// `traces` are {handle, path} pairs; `spec` carries the regex the model compiled
-// from the scientist's pattern and which capture group holds which field. A trace
-// the regex does not match contributes no clone — it is reported separately.
-group := func(traces, spec) {
-	if is_undefined(spec) || is_undefined(traces) || len(traces) == 0 {
+// `traces` carry the `fields` the model matched out of each path: plate, well,
+// chain and direction, each "" where the pattern has none. A trace with no
+// `fields` did not match and contributes no clone — it is reported separately.
+group := func(traces) {
+	if is_undefined(traces) || len(traces) == 0 {
 		return []
 	}
 
-	re := regexp.compile(spec.regex)
 	byKey := {}
 	order := []
 
 	for t in traces {
-		// `find` returns one entry per match, each an array of the whole match
-		// followed by its groups, so group N lives at index N of entry 0.
-		found := re.find(t.path, 1)
-		if is_undefined(found) || len(found) == 0 {
+		f := t.fields
+		if is_undefined(f) {
 			continue
 		}
-		m := found[0]
 
-		at := func(idx) {
-			if is_undefined(idx) || idx >= len(m) {
-				return ""
-			}
-			return m[idx].text
-		}
-
-		plate := at(spec.groups.plate)
-		well := at(spec.groups.well)
-		chain := at(spec.groups.chain)
-		key := cloneKey(plate, well)
+		key := cloneKey(f.plate, f.well)
 
 		clone := byKey[key]
 		if is_undefined(clone) {
-			clone = { plate: plate, well: well, chains: {}, fileCount: 0 }
+			clone = { plate: f.plate, well: f.well, chains: {}, fileCount: 0 }
 			byKey[key] = clone
 			order = append(order, key)
 		}
-		clone.chains[chain] = (is_undefined(clone.chains[chain]) ? 0 : clone.chains[chain]) + 1
+		clone.chains[f.chain] = (is_undefined(clone.chains[f.chain]) ? 0 : clone.chains[f.chain]) + 1
 		clone.fileCount = clone.fileCount + 1
 	}
 
@@ -64,23 +50,14 @@ group := func(traces, spec) {
 
 // The traces the pattern did not match. They are carried rather than dropped: a
 // file nobody can place is a result, not an absence.
-unmatched := func(traces, spec) {
+unmatched := func(traces) {
 	if is_undefined(traces) || len(traces) == 0 {
 		return []
 	}
-	if is_undefined(spec) {
-		paths := []
-		for t in traces {
-			paths = append(paths, t.path)
-		}
-		return paths
-	}
 
-	re := regexp.compile(spec.regex)
 	out := []
 	for t in traces {
-		found := re.find(t.path, 1)
-		if is_undefined(found) || len(found) == 0 {
+		if is_undefined(t.fields) {
 			out = append(out, t.path)
 		}
 	}
@@ -115,7 +92,7 @@ sortStrings := func(items) {
 //
 // A property arrives as a column of values keyed on plate and well, already
 // mapped and typed in the UI. Every value is carried as it stands, under the
-// name it arrived with; nothing is summarised, because a molecule's wells are
+// name it arrived with; nothing is summarised, because a clone's wells are
 // not collapsed until later.
 //
 // A clone no property reached is reported rather than given a value. An absent
@@ -171,10 +148,10 @@ attach := func(clones, properties) {
 }
 
 
-// Which end of the molecule a captured direction names. Anything else is a read
+// Which end of the sequence a captured direction names. Anything else is a read
 // whose direction the set does not state, and such a read stands alone.
-forwardValues := { "f": true, "fwd": true, "forward": true, "1": true }
-reverseValues := { "r": true, "rev": true, "reverse": true, "2": true }
+forwardValues := { "f": true, "fwd": true, "forward": true, "1": true, "r1": true }
+reverseValues := { "r": true, "rev": true, "reverse": true, "2": true, "r2": true }
 
 readEnd := func(direction) {
 	d := text.to_lower(text.trim_space(direction))
@@ -208,39 +185,30 @@ pairKeyOf := func(mode, plate, well, path, chain) {
 	return plate + "\u0000" + well
 }
 
-// The merge plan: one molecule per plate, well and chain, naming the reads that
+// The merge plan: one sequence per plate, well and chain, naming the reads that
 // should become it, and the key that will pair it with the other chain.
 //
-// Traces must carry `id` as well as `path`; the ids are what the driver stages
+// Traces must carry `id` as well as `path` and `fields`; the ids are what the driver stages
 // the files under. A second trace claiming an end another already holds is
 // counted rather than used, because nothing here can say which of the two the
 // scientist meant.
-molecules := func(traces, spec, pairingMode) {
-	if is_undefined(spec) || is_undefined(traces) || len(traces) == 0 {
+sequences := func(traces, pairingMode) {
+	if is_undefined(traces) || len(traces) == 0 {
 		return []
 	}
 
-	re := regexp.compile(spec.regex)
 	byKey := {}
 	order := []
 
 	for t in traces {
-		found := re.find(t.path, 1)
-		if is_undefined(found) || len(found) == 0 {
+		f := t.fields
+		if is_undefined(f) {
 			continue
 		}
-		m := found[0]
 
-		at := func(idx) {
-			if is_undefined(idx) || idx >= len(m) {
-				return ""
-			}
-			return m[idx].text
-		}
-
-		plate := at(spec.groups.plate)
-		well := at(spec.groups.well)
-		chain := at(spec.groups.chain)
+		plate := f.plate
+		well := f.well
+		chain := f.chain
 		key := plate + "\u0000" + well + "\u0000" + chain
 
 		mol := byKey[key]
@@ -256,14 +224,14 @@ molecules := func(traces, spec, pairingMode) {
 			order = append(order, key)
 		}
 
-		end := readEnd(at(spec.groups.direction))
+		end := readEnd(f.direction)
 		if end == "forward" && is_undefined(mol.forward) {
 			mol.forward = t.id
 		} else if end == "reverse" && is_undefined(mol.reverse) {
 			mol.reverse = t.id
 		} else if end == "" && is_undefined(mol.forward) && is_undefined(mol.reverse) {
 			// No direction in the pattern, or a value neither end claims. The
-			// read still makes a molecule; it just cannot be paired.
+			// read still makes a sequence; it just cannot be paired.
 			mol.forward = t.id
 		} else {
 			mol.extra = mol.extra + 1
@@ -279,7 +247,7 @@ molecules := func(traces, spec, pairingMode) {
 
 export {
 	group: group,
-	molecules: molecules,
+	sequences: sequences,
 	pairKeyOf: pairKeyOf,
 	readEnd: readEnd,
 	unmatched: unmatched,

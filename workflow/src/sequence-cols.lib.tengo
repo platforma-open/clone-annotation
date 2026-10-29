@@ -1,0 +1,103 @@
+// The p-column shape of the sequence table: one axis, one column per field.
+
+FEATURES := ["VDJRegion", "FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"]
+
+// Shown by default. Everything else is offered in the table's column chooser
+// rather than taking width nobody asked for.
+SHOWN := {
+	plate: true, well: true, chain: true, pairStatus: true, source: true, meanQuality: true,
+	regionStatus: true, vGene: true, jGene: true,
+	aa_VDJRegion: true, aa_CDR3: true, nt_VDJRegion: true, nt_CDR3: true
+}
+
+axisSpec := {
+	name: "pl7.app/vdj/sequenceKey",
+	type: "String",
+	annotations: { "pl7.app/label": "Sequence" }
+}
+
+// Higher sorts first. Identity, then what the reads were, then the annotation,
+// then the sequences.
+priority := func(column) {
+	order := {
+		plate: 1000, well: 990, chain: 980,
+		pairStatus: 970, pairedWith: 960, chainMismatch: 950,
+		source: 900, length: 890, meanQuality: 880, qualityScale: 870,
+		mismatches: 860, extraReads: 850, note: 840,
+		regionStatus: 800, observedChain: 790, frame: 780,
+		vGene: 700, dGene: 690, jGene: 680, mixcrChains: 670, vAlignment: 660
+	}
+	if !is_undefined(order[column]) {
+		return order[column]
+	}
+	return 500
+}
+
+col := func(column, valueType, label) {
+	return {
+		column: column,
+		spec: {
+			valueType: valueType,
+			name: "pl7.app/vdj/sequence/" + column,
+			annotations: {
+				"pl7.app/label": label,
+				"pl7.app/table/visibility": SHOWN[column] == true ? "default" : "optional",
+				"pl7.app/table/orderPriority": string(priority(column))
+			}
+		}
+	}
+}
+
+// `properties` are the sheet's mapped columns. They arrive under the names the
+// scientist's sheet used, so the p-column name is positional and the label
+// carries the real one.
+settings := func(properties) {
+	columns := [
+		col("plate", "String", "Plate"),
+		col("well", "String", "Well"),
+		col("chain", "String", "Chain"),
+		col("pairStatus", "String", "Pairing"),
+		col("pairedWith", "String", "Paired with"),
+		col("chainMismatch", "String", "Chain mismatch"),
+		col("source", "String", "Source"),
+		col("length", "Long", "Length"),
+		col("meanQuality", "Double", "Mean Q"),
+		col("qualityScale", "String", "Quality scale"),
+		col("mismatches", "Long", "Disagreements"),
+		col("extraReads", "Long", "Unused reads"),
+		col("note", "String", "Note"),
+		col("regionStatus", "String", "Regions"),
+		col("observedChain", "String", "Observed chain"),
+		col("frame", "Long", "Frame"),
+		col("vGene", "String", "V gene"),
+		col("dGene", "String", "D gene"),
+		col("jGene", "String", "J gene"),
+		col("mixcrChains", "String", "MiXCR chain"),
+		col("vAlignment", "String", "Departures from germline")
+	]
+
+	for f in FEATURES {
+		columns = append(columns, col("aa_" + f, "String", f + " aa"))
+	}
+	for f in FEATURES {
+		columns = append(columns, col("nt_" + f, "String", f + " nt"))
+	}
+
+	if !is_undefined(properties) {
+		for i, p in properties {
+			columns = append(columns, col("prop_" + string(i), p.type, p.name))
+		}
+	}
+
+	return {
+		axes: [{ column: "sequenceKey", spec: axisSpec }],
+		columns: columns,
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
+export {
+	axisSpec: axisSpec,
+	settings: settings
+}

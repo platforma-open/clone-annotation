@@ -1,11 +1,9 @@
 import { platforma } from "@platforma-open/milaboratories.clone-annotation.model";
 import { defineAppV3 } from "@platforma-sdk/ui-vue";
 import { computed, ref } from "vue";
-import ClonesPage from "./ClonesPage.vue";
 import MainPage from "./MainPage.vue";
-import MoleculesPage from "./MoleculesPage.vue";
-import VariantsPage from "./VariantsPage.vue";
-import UnmatchedPage from "./UnmatchedPage.vue";
+import QcPage from "./QcPage.vue";
+import ResultsPage from "./ResultsPage.vue";
 
 export const sdkPlugin = defineAppV3(platforma, (app) => {
   const showImportDialog = ref(false);
@@ -23,10 +21,14 @@ export const sdkPlugin = defineAppV3(platforma, (app) => {
   return {
     routes: {
       "/": () => MainPage,
-      "/clones": () => ClonesPage,
-      "/molecules": () => MoleculesPage,
-      "/variants": () => VariantsPage,
-      "/unmatched": () => UnmatchedPage,
+      "/results": () => ResultsPage,
+      "/qc": () => QcPage,
+      // A project saved before the tables moved under one page opens on the
+      // section it was left on, so those hrefs still have to resolve.
+      "/clones": () => ResultsPage,
+      "/molecules": () => ResultsPage,
+      "/variants": () => ResultsPage,
+      "/unmatched": () => QcPage,
     },
     showImportDialog,
     showPropertiesDialog,

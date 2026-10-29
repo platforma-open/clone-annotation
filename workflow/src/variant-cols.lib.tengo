@@ -1,4 +1,4 @@
-// The p-column shape of the variant table: one row per distinct molecule, with
+// The p-column shape of the variant table: one row per distinct clone, with
 // every well it was seen in.
 
 FEATURES := ["VDJRegion", "FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"]

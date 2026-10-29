@@ -12,7 +12,10 @@ import {
 import { computed, reactive, watch } from "vue";
 import { useApp } from "./app";
 import ParsedFilesList from "./ParsedFilesList.vue";
+import FieldValues from "./FieldValues.vue";
+import PatternBuilder from "./PatternBuilder.vue";
 import PatternHelp from "./PatternHelp.vue";
+import { checkSelection, summarizeFields } from "./selection_summary";
 import { compilePattern, describeSelection, TRACE_EXTENSIONS } from "./trace_set";
 
 const app = useApp();
@@ -43,21 +46,13 @@ const compiled = computed(() => compilePattern(draft.pattern));
 const parsed = computed(() => describeSelection(draft.files, compiled.value.pattern));
 const matchedCount = computed(() => parsed.value.filter((f) => f.match).length);
 
-/** Two files claiming one identity means one of them will be lost silently. */
-const collisions = computed(() => {
-  const seen = new Map<string, number>();
-  for (const f of parsed.value) {
-    if (!f.match) continue;
-    const key = [
-      f.match.plate?.value ?? "",
-      f.match.well.value,
-      f.match.chain?.value ?? "",
-      f.match.direction?.value ?? "",
-    ].join("\u0000");
-    seen.set(key, (seen.get(key) ?? 0) + 1);
-  }
-  return [...seen.values()].filter((n) => n > 1).length;
-});
+const fields = computed(() =>
+  compiled.value.pattern ? summarizeFields(parsed.value, compiled.value.pattern) : [],
+);
+
+const warnings = computed(() =>
+  compiled.value.pattern ? checkSelection(parsed.value, compiled.value.pattern) : [],
+);
 
 const canImport = computed(
   () => draft.name.trim() !== "" && compiled.value.pattern !== undefined && matchedCount.value > 0,
@@ -67,6 +62,11 @@ function addFiles(handles: ImportFileHandle[]) {
   const seen = new Set(draft.files);
   draft.files = [...draft.files, ...handles.filter((h) => !seen.has(h))];
   draft.formOpen = true;
+}
+
+function removeFiles(handles: ImportFileHandle[]) {
+  const drop = new Set(handles);
+  draft.files = draft.files.filter((h) => !drop.has(h));
 }
 
 function doImport() {
@@ -88,6 +88,8 @@ function doImport() {
 
     <PlTextField v-model="draft.name" label="Dataset Name" :clearable="() => ''" />
 
+    <PatternBuilder v-model="draft.pattern" :files="parsed" />
+
     <div class="pattern-row">
       <PlTextField
         v-model="draft.pattern"
@@ -99,12 +101,13 @@ function doImport() {
       <PatternHelp />
     </div>
 
-    <p v-if="collisions" class="collisions">
-      {{ collisions }} identity collision(s): more than one file claims the same plate, well, chain
-      and direction.
-    </p>
+    <FieldValues v-if="matchedCount > 0" :fields="fields" />
 
-    <ParsedFilesList :items="parsed" />
+    <ul v-if="warnings.length" class="warnings" data-testid="pattern-warnings">
+      <li v-for="w in warnings" :key="w">{{ w }}</li>
+    </ul>
+
+    <ParsedFilesList :items="parsed" @remove="removeFiles" />
 
     <PlBtnSecondary @click="() => (draft.filePickerOpen = true)">Add more files</PlBtnSecondary>
 
@@ -134,9 +137,10 @@ function doImport() {
   flex: 1;
 }
 
-.collisions {
-  margin: 8px 0 0;
+.warnings {
+  margin: 0 0 8px;
+  padding-left: 18px;
   font-size: 12px;
-  color: var(--err-01, #c0392b);
+  color: var(--warn-01, #b36b00);
 }
 </style>

@@ -4,10 +4,15 @@
  * Paths, not bare file names: the plate is frequently a directory rather than part
  * of the file name, so `{{Plate}}/{{Well}}_{{Chain}}.ab1` has to bind `{{Plate}}`
  * to a path segment.
+ *
+ * A token is `{{Name}}`, `{{Name:a|b}}` to accept only the listed values, or
+ * `{{Name=x}}` to give a value when the token's `[ ]` section is absent.
  */
 
 export type Range = { from: number; to: number };
-export type Match = Range & { value: string };
+
+/** A field's value and where each copy of it sits. A value from a default has no range. */
+export type Match = { value: string; ranges: Range[] };
 
 export type PathGroups<T> = {
   well: T;
@@ -18,99 +23,207 @@ export type PathGroups<T> = {
   anyMatchers: T[];
 };
 
-export type PathPatternMatch = PathGroups<Match>;
+export type PathPatternMatch = PathGroups<Match> & {
+  /** Where each `[ ]` part sits in the path, in pattern order; undefined when it is absent. */
+  sections: (Range | undefined)[];
+};
 
-export type CompiledSpec = {
-  regex: string;
-  groups: {
-    well: number;
-    plate?: number;
-    chain?: number;
-    direction?: number;
-    tags?: Record<string, number>;
-  };
+export type Field = "well" | "plate" | "chain" | "direction";
+
+const LABEL: Record<Field, string> = {
+  well: "{{Well}}",
+  plate: "{{Plate}}",
+  chain: "{{Chain}}",
+  direction: "{{Direction}}",
 };
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/**
- * Literal text, with `[a|b]` sections compiled to an optional alternation.
- *
- * It exists for one shape: a set filed one directory per chain, where the
- * folder is the plate with a suffix. `{{Plate}}[_LC|_KC]/` reads `Plate1` from
- * all three of `Plate1`, `Plate1_LC` and `Plate1_KC`, because the alternatives
- * are stated rather than guessed. Without them the plate token is lazy and
- * collapses to the shortest thing that still lets the rest match.
- *
- * The section captures nothing, so it holds literal text only.
- */
-function compileLiteral(text: string, pattern: string): string {
-  let out = "";
-  let at = 0;
-  while (at < text.length) {
-    const open = text.indexOf("[", at);
-    if (open < 0) {
-      out += escapeRegExp(text.slice(at));
-      break;
-    }
-    out += escapeRegExp(text.slice(at, open));
-    const close = text.indexOf("]", open);
-    if (close < 0) throw new Error(`Unclosed [ in ${pattern}`);
-    const body = text.slice(open + 1, close);
-    if (body === "") throw new Error(`Empty [] in ${pattern}`);
-    if (body.includes("/")) throw new Error(`[] cannot span a directory in ${pattern}`);
-    if (body.includes("{")) throw new Error(`[] holds literal text only, in ${pattern}`);
-    out += "(?:" + body.split("|").map(escapeRegExp).join("|") + ")?";
-    at = close + 1;
-  }
-  return out;
+/** Case-insensitive without the `i` flag, so the rest of the pattern stays exact. */
+function anyCase(word: string): string {
+  return [...word]
+    .map((ch) => {
+      const lo = ch.toLowerCase();
+      const up = ch.toUpperCase();
+      return lo === up ? escapeRegExp(ch) : `[${up}${lo}]`;
+    })
+    .join("");
 }
 
-function getMatch(m: RegExpMatchArray, idx: number): Match {
-  const bounds = m.indices?.[idx];
-  if (bounds === undefined || m[idx] === undefined)
-    throw new Error(`Group ${idx} matched without a position`);
-  return { from: bounds[0], to: bounds[1], value: m[idx] };
+// Longest first: JS alternation is leftmost-wins, so `H|HC` would take the "H" of
+// "HC" and leave "C" to fail against the next literal.
+function oneOf(words: string[], cased: (w: string) => string): string {
+  return (
+    "(?:" +
+    [...words]
+      .sort((a, b) => b.length - a.length)
+      .map(cased)
+      .join("|") +
+    ")"
+  );
 }
 
 // A token never spans a directory boundary: a plate is one directory and a well
 // sits in one file name, so letting `.` cross `/` only produces silent mis-splits.
-const SEGMENT = "([^/]+?)";
-const SEGMENT_NUM = "([0-9]+)";
+const SEGMENT = "[^/]+?";
+const SEGMENT_NUM = "[0-9]+";
 
-// Longer alternatives first: JS alternation is leftmost-wins, so `w|well` would
-// match the "W" of "{{Well}}" and leave "ell}}" as stray text.
-const TOKEN =
-  /\{\{ *(?<well>well|w)|\{\{ *(?<plate>plate|p)|\{\{ *(?<chain>chain|c)|\{\{ *(?<direction>direction|d)|\{\{ *\*?:(?<tag>[a-zA-Z0-9_]+)|\{\{ *(?<any>\*)|\{\{ *(?<anynum>n)/dgi;
+// Typed rather than free text, because a free token next to another one with no
+// separator between them ("XY2208G04") takes as little as it can and every file
+// still matches, wrongly. A row letter and a column that fit a 384-well plate.
+const WELL = "[A-Pa-p](?:0?[1-9]|1[0-9]|2[0-4])";
+
+const CHAIN_WORDS = [
+  "heavy",
+  "light",
+  "kappa",
+  "lambda",
+  "IGH",
+  "IGK",
+  "IGL",
+  "VHH",
+  "VH",
+  "VL",
+  "VK",
+  "HC",
+  "LC",
+  "KC",
+  "H",
+  "L",
+  "K",
+  "IgG",
+  "IgG1",
+  "IgG2",
+  "IgG3",
+  "IgG4",
+  "IgM",
+  "IgA",
+  "IgA1",
+  "IgA2",
+  "IgD",
+  "IgE",
+];
 
 // Capillary sequencing reads a template from each end, marked F/R or fwd/rev.
-// Not Illumina's R1/R2, though the digits are accepted for sets named that way.
-const DIRECTION = "(fwd|rev|[fFrR]|[rR]?[12])";
+// Not Illumina's R1/R2, though those are accepted for sets named that way. No list
+// is taken: the workflow has to know which end each value names.
+const DIRECTION_WORDS = ["forward", "reverse", "fwd", "rev", "F", "R", "R1", "R2", "1", "2"];
+
+const DEFAULT_VALUES: Record<Field, string> = {
+  well: WELL,
+  plate: SEGMENT,
+  chain: oneOf(CHAIN_WORDS, anyCase),
+  direction: oneOf(DIRECTION_WORDS, anyCase),
+};
+
+/** Whether the field's own token, with no list, would read this value. */
+export function fieldAccepts(field: Field, value: string): boolean {
+  return new RegExp(`^(?:${DEFAULT_VALUES[field]})$`).test(value);
+}
+
+// Longer names first, so `w` does not take the "W" of "Well".
+const TOKEN_BODY =
+  /^\s*(?:(?<field>well|plate|chain|direction|w|p|c|d)|\*?:(?<tag>[a-zA-Z0-9_]+)|(?<any>\*)|(?<anynum>n))\s*(?::(?<list>[^=]*))?(?:=(?<def>.*))?$/i;
+
+const FIELD_OF: Record<string, Field> = {
+  well: "well",
+  w: "well",
+  plate: "plate",
+  p: "plate",
+  chain: "chain",
+  c: "chain",
+  direction: "direction",
+  d: "direction",
+};
+
+/** Every place one field is read from, in pattern order. */
+type Slot = { groups: number[]; optional: boolean[]; ranges: Range[]; def?: string };
+
+type Piece =
+  | { kind: "text"; text: string; at: number }
+  | { kind: "token"; body: string; range: Range }
+  | { kind: "section"; pieces: Piece[]; range: Range };
+
+/** Splits a pattern into literal text, tokens and `[ ]` sections. */
+function scan(pattern: string, from: number, to: number, inSection: boolean): Piece[] {
+  const pieces: Piece[] = [];
+  let text = "";
+  let textAt = from;
+  const flush = () => {
+    if (text !== "") pieces.push({ kind: "text", text, at: textAt });
+    text = "";
+  };
+
+  let at = from;
+  while (at < to) {
+    if (pattern.startsWith("{{", at)) {
+      const close = pattern.indexOf("}}", at + 2);
+      if (close < 0 || close + 2 > to) throw new Error(`Unclosed token at ${at} in ${pattern}`);
+      flush();
+      pieces.push({
+        kind: "token",
+        body: pattern.slice(at + 2, close),
+        range: { from: at, to: close + 2 },
+      });
+      at = close + 2;
+      textAt = at;
+    } else if (pattern[at] === "[") {
+      if (inSection) throw new Error(`[ ] cannot hold another [ ] in ${pattern}`);
+      const close = pattern.indexOf("]", at + 1);
+      if (close < 0 || close >= to) throw new Error(`Unclosed [ in ${pattern}`);
+      if (close === at + 1) throw new Error(`Empty [] in ${pattern}`);
+      flush();
+      pieces.push({
+        kind: "section",
+        pieces: scan(pattern, at + 1, close, true),
+        range: { from: at, to: close + 1 },
+      });
+      at = close + 1;
+      textAt = at;
+    } else {
+      text += pattern[at];
+      at++;
+    }
+  }
+  flush();
+  return pieces;
+}
+
+function parseList(raw: string, token: string): string[] {
+  const values = raw.split("|").map((v) => v.trim());
+  if (values.some((v) => v === "")) throw new Error(`Empty value in the list of ${token}`);
+  if (values.some((v) => v.includes("/")))
+    throw new Error(`A value cannot hold a directory, in ${token}`);
+  return values;
+}
 
 export class PathPattern {
   private constructor(
     private readonly regexp: RegExp,
-    private readonly groups: PathGroups<number>,
+    private readonly slots: Partial<Record<Field, Slot>>,
+    private readonly tagSlots: Record<string, Slot>,
+    private readonly anyGroups: number[],
+    private readonly sectionGroups: number[],
     public readonly rawPattern: string,
-    public readonly rawElements: PathGroups<Range>,
+    public readonly rawElements: PathGroups<Range[]>,
   ) {}
 
   public get hasPlate(): boolean {
-    return this.groups.plate !== undefined;
+    return this.slots.plate !== undefined;
   }
 
   public get hasChain(): boolean {
-    return this.groups.chain !== undefined;
+    return this.slots.chain !== undefined;
   }
 
   public get hasDirection(): boolean {
-    return this.groups.direction !== undefined;
+    return this.slots.direction !== undefined;
   }
 
   public get tags(): string[] {
-    return this.groups.tags ? Object.keys(this.groups.tags).sort() : [];
+    return Object.keys(this.tagSlots).sort();
   }
 
   /**
@@ -128,106 +241,192 @@ export class PathPattern {
     return dot < 0 ? "" : this.rawPattern.slice(dot + 1).toLowerCase();
   }
 
-  /**
-   * The compiled regex and which capture group holds which field, for the workflow
-   * to apply the same matching without reimplementing the token grammar.
-   */
-  public get compiled(): CompiledSpec {
-    return {
-      regex: this.regexp.source,
-      groups: {
-        well: this.groups.well,
-        plate: this.groups.plate,
-        chain: this.groups.chain,
-        direction: this.groups.direction,
-        tags: this.groups.tags,
-      },
-    };
+  public match(relativePath: string): PathPatternMatch | undefined {
+    return this.resolve(relativePath).match;
   }
 
-  public match(relativePath: string): PathPatternMatch | undefined {
-    const m = relativePath.match(this.regexp);
-    if (!m) return undefined;
+  /** Why a path did not match, or undefined if it did. */
+  public explain(relativePath: string): string | undefined {
+    return this.resolve(relativePath).reason;
+  }
 
-    const result: PathPatternMatch = {
-      well: getMatch(m, this.groups.well),
-      anyMatchers: [],
+  private resolve(relativePath: string): { match?: PathPatternMatch; reason?: string } {
+    const m = relativePath.match(this.regexp);
+    if (!m) return { reason: "Does not fit the pattern" };
+
+    let reason: string | undefined;
+    const read = (slot: Slot, label: string): Match | undefined => {
+      const copies: Match[] = [];
+      for (const g of slot.groups) {
+        const bounds = m.indices?.[g];
+        const value = m[g];
+        // A group inside an absent [ ] section takes no part in the match.
+        if (value === undefined || bounds === undefined) continue;
+        copies.push({ value, ranges: [{ from: bounds[0], to: bounds[1] }] });
+      }
+      if (copies.length === 0)
+        return slot.def === undefined ? undefined : { value: slot.def, ranges: [] };
+
+      const other = copies.find((c) => c.value !== copies[0]!.value);
+      if (other !== undefined && reason === undefined)
+        reason = `${label} reads "${copies[0]!.value}" in one place and "${other.value}" in another`;
+      return { value: copies[0]!.value, ranges: copies.flatMap((c) => c.ranges) };
     };
-    if (this.groups.plate !== undefined) result.plate = getMatch(m, this.groups.plate);
-    if (this.groups.chain !== undefined) result.chain = getMatch(m, this.groups.chain);
-    if (this.groups.direction !== undefined) result.direction = getMatch(m, this.groups.direction);
-    if (this.groups.tags !== undefined) {
-      result.tags = {};
-      for (const [name, gi] of Object.entries(this.groups.tags))
-        result.tags[name] = getMatch(m, gi);
+
+    const well = read(this.slots.well!, LABEL.well);
+    if (well === undefined) throw new Error("{{Well}} matched without a value");
+    const result: PathPatternMatch = { well, anyMatchers: [], sections: [] };
+    for (const field of ["plate", "chain", "direction"] as const) {
+      const slot = this.slots[field];
+      if (slot === undefined) continue;
+      const got = read(slot, LABEL[field]);
+      if (got !== undefined) result[field] = got;
     }
-    for (const gi of this.groups.anyMatchers) result.anyMatchers.push(getMatch(m, gi));
-    return result;
+    const tagNames = Object.keys(this.tagSlots);
+    if (tagNames.length > 0) {
+      result.tags = {};
+      for (const name of tagNames) {
+        const got = read(this.tagSlots[name]!, `{{:${name}}}`);
+        if (got !== undefined) result.tags[name] = got;
+      }
+    }
+    for (const g of this.anyGroups) {
+      const bounds = m.indices?.[g];
+      if (m[g] !== undefined && bounds !== undefined)
+        result.anyMatchers.push({ value: m[g], ranges: [{ from: bounds[0], to: bounds[1] }] });
+    }
+    result.sections = this.sectionGroups.map((g) => {
+      const bounds = m.indices?.[g];
+      return m[g] === undefined || bounds === undefined
+        ? undefined
+        : { from: bounds[0], to: bounds[1] };
+    });
+
+    // Two copies of one field that disagree mean the file sits in the wrong folder
+    // or was renamed by hand; either way nothing here can say which copy is right.
+    return reason === undefined ? { match: result } : { reason };
   }
 
   static parse(pattern: string): PathPattern {
-    let regexp = "^";
-    let lastIndex = 0;
     let groupCounter = 1;
-    const groups: Partial<PathGroups<number>> = { tags: {}, anyMatchers: [] };
-    const raw: Partial<PathGroups<Range>> = { tags: {}, anyMatchers: [] };
+    const slots: Partial<Record<Field, Slot>> = {};
+    const tagSlots: Record<string, Slot> = {};
+    const anyGroups: number[] = [];
+    const sectionGroups: number[] = [];
+    const raw: PathGroups<Range[]> = { well: [], tags: {}, anyMatchers: [] };
 
-    const single = (
-      key: "well" | "plate" | "chain" | "direction",
-      label: string,
-      re: string,
+    const addCopy = (
+      slot: Slot,
+      optional: boolean,
       range: Range,
+      def: string | undefined,
+      token: string,
     ) => {
-      if (groups[key] !== undefined) throw new Error(`Repeated ${label} matcher`);
-      groups[key] = groupCounter++;
-      raw[key] = range;
-      regexp += re;
+      slot.groups.push(groupCounter++);
+      slot.optional.push(optional);
+      slot.ranges.push(range);
+      if (def !== undefined) {
+        if (slot.def !== undefined && slot.def !== def)
+          throw new Error(`Two different defaults for one field, in ${token}`);
+        slot.def = def;
+      }
     };
 
-    for (const m of pattern.matchAll(TOKEN)) {
-      // The token regex stops before the closing braces so each alternative can be
-      // named; consume them here or they land in the literal text.
-      const open = m.indices?.[0];
-      if (open === undefined) throw new Error("Token matched without its position");
-      const close = pattern.indexOf("}}", open[1]);
-      if (close < 0) throw new Error(`Unclosed token at ${open[0]} in ${pattern}`);
-      const between = pattern.slice(open[1], close).trim();
-      if (between !== "")
-        throw new Error(`Unexpected text in token: ${pattern.slice(open[0], close + 2)}`);
+    const compileToken = (body: string, range: Range, optional: boolean): string => {
+      const token = pattern.slice(range.from, range.to);
+      const t = TOKEN_BODY.exec(body)?.groups;
+      if (t === undefined) throw new Error(`Unknown token ${token}`);
 
-      const range = { from: open[0], to: close + 2 };
-      regexp += compileLiteral(pattern.substring(lastIndex, open[0]), pattern);
-      lastIndex = close + 2;
+      const list = t["list"] !== undefined ? parseList(t["list"], token) : undefined;
+      const def = t["def"]?.trim();
+      if (def === "") throw new Error(`Empty default in ${token}`);
+      if (def !== undefined && !optional)
+        throw new Error(
+          `A default applies only inside [ ], where the part can be absent: ${token}`,
+        );
 
-      const g = m.groups!;
-      if (g["well"]) single("well", "{{Well}}", SEGMENT, range);
-      else if (g["plate"]) single("plate", "{{Plate}}", SEGMENT, range);
-      else if (g["chain"]) single("chain", "{{Chain}}", SEGMENT, range);
-      else if (g["direction"]) single("direction", "{{Direction}}", DIRECTION, range);
-      else if (g["tag"]) {
-        groups.tags![g["tag"]] = groupCounter++;
-        raw.tags![g["tag"]] = range;
-        regexp += SEGMENT;
-      } else if (g["any"]) {
-        groups.anyMatchers!.push(groupCounter++);
-        raw.anyMatchers!.push(range);
-        regexp += SEGMENT;
-      } else if (g["anynum"]) {
-        groups.anyMatchers!.push(groupCounter++);
-        raw.anyMatchers!.push(range);
-        regexp += SEGMENT_NUM;
-      } else throw new Error(`Unexpected token: ${m[0]}`);
-    }
+      if (t["any"] !== undefined || t["anynum"] !== undefined) {
+        if (list !== undefined || def !== undefined)
+          throw new Error(`${token} skips text and takes no list or default`);
+        anyGroups.push(groupCounter++);
+        raw.anyMatchers.push([range]);
+        return `(${t["any"] !== undefined ? SEGMENT : SEGMENT_NUM})`;
+      }
 
-    regexp += compileLiteral(pattern.substring(lastIndex), pattern) + "$";
+      let values: string;
+      let slot: Slot;
+      if (t["tag"] !== undefined) {
+        values = list !== undefined ? oneOf(list, escapeRegExp) : SEGMENT;
+        slot = tagSlots[t["tag"]] ??= { groups: [], optional: [], ranges: [] };
+        (raw.tags![t["tag"]] ??= []).push(range);
+      } else {
+        const field = FIELD_OF[t["field"]!.toLowerCase()]!;
+        if (field === "well") {
+          if (optional) throw new Error(`{{Well}} cannot sit inside [ ]: every file needs a well`);
+          if (list !== undefined)
+            throw new Error(`{{Well}} takes a well such as A1 or H12, not a list`);
+        }
+        if (field === "direction" && list !== undefined)
+          throw new Error(`{{Direction}} takes F/R, fwd/rev, forward/reverse or 1/2, not a list`);
+        values = list !== undefined ? oneOf(list, escapeRegExp) : DEFAULT_VALUES[field];
+        slot = slots[field] ??= { groups: [], optional: [], ranges: [] };
+        if (field === "well") raw.well.push(range);
+        else (raw[field] ??= []).push(range);
+      }
 
-    if (groups.well === undefined) throw new Error("No {{Well}} matcher in the pattern");
+      if (def !== undefined && !new RegExp(`^${values}$`).test(def))
+        throw new Error(`The default in ${token} is not a value the token accepts`);
+      addCopy(slot, optional, range, def, token);
+      return `(${values})`;
+    };
+
+    const compile = (pieces: Piece[], optional: boolean): string =>
+      pieces
+        .map((p) => {
+          if (p.kind === "text") return escapeRegExp(p.text);
+          if (p.kind === "token") return compileToken(p.body, p.range, optional);
+          return compileSection(p);
+        })
+        .join("");
+
+    // `[a|b]` is one of several literal texts, or none of them. `[_{{:Run}}]` is a
+    // part that may be absent, tokens and all. The two are not mixed: a bar between
+    // tokens would leave it unclear which copy of a field each alternative fills.
+    const compileSection = (section: Extract<Piece, { kind: "section" }>): string => {
+      const text = pattern.slice(section.range.from, section.range.to);
+      if (text.includes("/")) throw new Error(`[] cannot span a directory in ${pattern}`);
+      // Numbered before its content, as the regex numbers groups by opening paren.
+      sectionGroups.push(groupCounter++);
+      const hasToken = section.pieces.some((p) => p.kind === "token");
+      if (!hasToken) {
+        const body = section.pieces.map((p) => (p.kind === "text" ? p.text : "")).join("");
+        return "(" + body.split("|").map(escapeRegExp).join("|") + ")?";
+      }
+      if (section.pieces.some((p) => p.kind === "text" && p.text.includes("|")))
+        throw new Error(`A [ ] holding a token cannot also list alternatives: ${text}`);
+      return "(" + compile(section.pieces, true) + ")?";
+    };
+
+    const regexp = "^" + compile(scan(pattern, 0, pattern.length, false), false) + "$";
+
+    if (slots.well === undefined) throw new Error("No {{Well}} matcher in the pattern");
+    for (const [field, slot] of Object.entries(slots))
+      if (slot.def !== undefined && slot.optional.includes(false))
+        throw new Error(
+          `The default for ${LABEL[field as Field]} never applies: one copy is outside [ ]`,
+        );
+    for (const [name, slot] of Object.entries(tagSlots))
+      if (slot.def !== undefined && slot.optional.includes(false))
+        throw new Error(`The default for {{:${name}}} never applies: one copy is outside [ ]`);
 
     return new PathPattern(
       new RegExp(regexp, "d"),
-      groups as PathGroups<number>,
+      slots,
+      tagSlots,
+      anyGroups,
+      sectionGroups,
       pattern,
-      raw as PathGroups<Range>,
+      raw,
     );
   }
 }
@@ -252,8 +451,8 @@ function escapeHtml(s: string): string {
  */
 export function highlightMatch(path: string, m: PathPatternMatch, opts: HighlightOpts): string {
   const spans: { range: Range; wrapping: Wrapping }[] = [];
-  const add = (range: Range | undefined, wrapping: Wrapping | undefined) => {
-    if (range && wrapping) spans.push({ range, wrapping });
+  const add = (field: Match | undefined, wrapping: Wrapping | undefined) => {
+    if (field && wrapping) for (const range of field.ranges) spans.push({ range, wrapping });
   };
 
   add(m.well, opts.well);

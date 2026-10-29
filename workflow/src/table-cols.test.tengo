@@ -1,0 +1,29 @@
+test := import("@platforma-sdk/workflow-tengo:test")
+sequenceCols := import(":sequence-cols")
+cloneCols := import(":clone-cols")
+variantCols := import(":variant-cols")
+
+hasColumn := func(settings, name) {
+	for c in settings.columns {
+		if c.spec.name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// The model finds each table's anchor by this exact name. A rename on one side
+// alone leaves the page empty with no error anywhere, so the names are pinned.
+TestEachTableCarriesTheColumnTheModelAnchorsOn := func() {
+	test.isTrue(hasColumn(sequenceCols.settings(undefined), "pl7.app/vdj/sequence/well"))
+	test.isTrue(hasColumn(cloneCols.settings(), "pl7.app/vdj/clone/well"))
+	test.isTrue(hasColumn(variantCols.settings(undefined), "pl7.app/vdj/variant/wellCount"))
+}
+
+TestTheThreeTablesDoNotShareAnAxis := func() {
+	names := {}
+	names[sequenceCols.axisSpec.name] = true
+	names[cloneCols.axisSpec.name] = true
+	names[variantCols.axisSpec.name] = true
+	test.isEqual(3, len(names))
+}

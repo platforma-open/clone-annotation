@@ -140,10 +140,10 @@ def run_annotate(work, report, extra):
     return json.load(open(out))
 
 
-def test_the_numbered_frame_wins_and_a_dead_clone_is_not_blamed():
+def test_the_numbered_frame_wins_and_a_dead_sequence_is_not_blamed():
     work = tempfile.mkdtemp()
     report = os.path.join(work, "report.json")
-    json.dump({"molecules": [
+    json.dump({"sequences": [
         {"id": "m0", "plate": "Plate1", "well": "A1", "chain": "IGH", "source": "merged"},
         {"id": "m1", "plate": "Plate1", "well": "A2", "chain": "IGH", "source": "merged"},
         {"id": "m2", "plate": "Plate1", "well": "A3", "chain": "IGL", "source": "none"},
@@ -161,13 +161,13 @@ def test_the_numbered_frame_wins_and_a_dead_clone_is_not_blamed():
     check("no fasta means no nucleotide", by_id["m0"].get("nt"), None)
     check("better score wins", by_id["m1"]["frame"], 2)
     check("no read is not a numbering failure", result["notNumbered"], [])
-    check("dead clone still listed", by_id["m2"]["status"], "Failed")
+    check("dead sequence still listed", by_id["m2"]["status"], "Failed")
 
 
 def test_germline_joins_positionally_and_its_absence_is_reported():
     work = tempfile.mkdtemp()
     report = os.path.join(work, "report.json")
-    json.dump({"molecules": [
+    json.dump({"sequences": [
         {"id": "m0", "plate": "Plate1", "well": "A1", "chain": "IGH", "source": "merged"},
         {"id": "m1", "plate": "Plate1", "well": "A2", "chain": "IGH", "source": "merged"},
     ]}, open(report, "w"))
@@ -195,8 +195,8 @@ def test_germline_joins_positionally_and_its_absence_is_reported():
     check("absence reported", result["notAligned"], ["Plate1 A2 IGH"])
 
 
-def clone(mol_id, plate, well, chain, pair_key, observed=None):
-    e = {"id": mol_id, "plate": plate, "well": well, "declaredChain": chain,
+def sequence(seq_id, plate, well, chain, pair_key, observed=None):
+    e = {"id": seq_id, "plate": plate, "well": well, "declaredChain": chain,
          "pairKey": pair_key}
     if observed:
         e["observedChain"] = observed
@@ -205,8 +205,8 @@ def clone(mol_id, plate, well, chain, pair_key, observed=None):
 
 def test_two_chains_of_one_well_pair():
     from annotate import pair_up
-    rows = [clone("m0", "Plate1", "A1", "IGH", "k1", "H"),
-            clone("m1", "Plate1", "A1", "IGL", "k1", "KL")]
+    rows = [sequence("m0", "Plate1", "A1", "IGH", "k1", "H"),
+            sequence("m1", "Plate1", "A1", "IGL", "k1", "KL")]
     unpaired, mismatched = pair_up(rows, True)
     check("heavy paired", rows[0]["pairStatus"], "Paired")
     check("points at the light", rows[0]["pairedWith"], "Plate1|A1|IGL")
@@ -218,9 +218,9 @@ def test_two_chains_of_one_well_pair():
 def test_a_lone_chain_is_unpaired_not_dropped():
     """A2 has both chains, so the set pairs; A1's light chain never arrived."""
     from annotate import pair_up
-    rows = [clone("m0", "Plate1", "A1", "IGH", "k1", "H"),
-            clone("m1", "Plate1", "A2", "IGH", "k2", "H"),
-            clone("m2", "Plate1", "A2", "IGL", "k2", "KL")]
+    rows = [sequence("m0", "Plate1", "A1", "IGH", "k1", "H"),
+            sequence("m1", "Plate1", "A2", "IGH", "k2", "H"),
+            sequence("m2", "Plate1", "A2", "IGL", "k2", "KL")]
     unpaired, _ = pair_up(rows, True)
     check("status", rows[0]["pairStatus"], "Unpaired")
     check("the complete well pairs", rows[1]["pairStatus"], "Paired")
@@ -229,9 +229,9 @@ def test_a_lone_chain_is_unpaired_not_dropped():
 
 def test_two_of_the_same_chain_are_ambiguous_not_guessed():
     from annotate import pair_up
-    rows = [clone("m0", "Plate1", "A1", "IGH", "k1", "H"),
-            clone("m1", "Plate1", "A1", "IGH", "k1", "H"),
-            clone("m2", "Plate1", "A2", "IGL", "k2", "KL")]
+    rows = [sequence("m0", "Plate1", "A1", "IGH", "k1", "H"),
+            sequence("m1", "Plate1", "A1", "IGH", "k1", "H"),
+            sequence("m2", "Plate1", "A2", "IGL", "k2", "KL")]
     unpaired, _ = pair_up(rows, True)
     check("first", rows[0]["pairStatus"], "Ambiguous")
     check("second", rows[1]["pairStatus"], "Ambiguous")
@@ -240,8 +240,8 @@ def test_two_of_the_same_chain_are_ambiguous_not_guessed():
 
 def test_a_set_that_names_no_chain_passes_through_whole():
     from annotate import pair_up
-    rows = [clone("m0", "Plate1", "A1", "", "k1", "H"),
-            clone("m1", "Plate1", "A2", "", "k2", "H")]
+    rows = [sequence("m0", "Plate1", "A1", "", "k1", "H"),
+            sequence("m1", "Plate1", "A2", "", "k2", "H")]
     unpaired, _ = pair_up(rows, False)
     check("single domain", [r["pairStatus"] for r in rows],
           ["Single domain", "Single domain"])
@@ -252,9 +252,9 @@ def test_a_failed_primer_does_not_make_a_clean_well_ambiguous():
     """Every primer is fired at every well, so a file that yielded nothing is a
     failed attempt rather than a third chain."""
     from annotate import pair_up
-    rows = [clone("m0", "Plate1", "A1", "IgG", "k1", "H"),
-            clone("m1", "Plate1", "A1", "Kappa", "k1", "KL"),
-            clone("m2", "Plate1", "A1", "Lambda", "k1")]  # no sequence
+    rows = [sequence("m0", "Plate1", "A1", "IgG", "k1", "H"),
+            sequence("m1", "Plate1", "A1", "Kappa", "k1", "KL"),
+            sequence("m2", "Plate1", "A1", "Lambda", "k1")]  # no sequence
     unpaired, _ = pair_up(rows, True)
     check("heavy paired", rows[0]["pairStatus"], "Paired")
     check("kappa paired", rows[1]["pairStatus"], "Paired")
@@ -264,9 +264,9 @@ def test_a_failed_primer_does_not_make_a_clean_well_ambiguous():
 
 def test_two_light_chains_that_both_sequenced_stay_ambiguous():
     from annotate import pair_up
-    rows = [clone("m0", "Plate1", "A1", "IgG", "k1", "H"),
-            clone("m1", "Plate1", "A1", "Kappa", "k1", "KL"),
-            clone("m2", "Plate1", "A1", "Lambda", "k1", "KL")]
+    rows = [sequence("m0", "Plate1", "A1", "IgG", "k1", "H"),
+            sequence("m1", "Plate1", "A1", "Kappa", "k1", "KL"),
+            sequence("m2", "Plate1", "A1", "Lambda", "k1", "KL")]
     unpaired, _ = pair_up(rows, True)
     check("all three ambiguous", [r["pairStatus"] for r in rows],
           ["Ambiguous"] * 3)
@@ -276,8 +276,8 @@ def test_two_light_chains_that_both_sequenced_stay_ambiguous():
 def test_a_set_naming_one_chain_is_not_ninety_six_failures():
     """A heavy-only plate declares a chain but holds no pairs to make."""
     from annotate import pair_up
-    rows = [clone("m0", "Plate1", "A1", "IgG", "k1", "H"),
-            clone("m1", "Plate1", "A2", "IgG", "k2", "H")]
+    rows = [sequence("m0", "Plate1", "A1", "IgG", "k1", "H"),
+            sequence("m1", "Plate1", "A2", "IgG", "k2", "H")]
     unpaired, _ = pair_up(rows, True)
     check("single domain", [r["pairStatus"] for r in rows],
           ["Single domain", "Single domain"])
@@ -286,8 +286,8 @@ def test_a_set_naming_one_chain_is_not_ninety_six_failures():
 
 def test_a_label_the_sequence_contradicts_is_flagged():
     from annotate import pair_up
-    rows = [clone("m0", "Plate1", "A1", "IGH", "k1", "KL"),
-            clone("m1", "Plate1", "A1", "IGL", "k1", "KL")]
+    rows = [sequence("m0", "Plate1", "A1", "IGH", "k1", "KL"),
+            sequence("m1", "Plate1", "A1", "IGL", "k1", "KL")]
     _, mismatched = pair_up(rows, True)
     check("one flagged", len(mismatched), 1)
     check("the heavy one", rows[0].get("chainMismatch"), True)
@@ -296,26 +296,26 @@ def test_a_label_the_sequence_contradicts_is_flagged():
 
 def test_a_label_nothing_can_read_is_not_a_contradiction():
     from annotate import pair_up
-    rows = [clone("m0", "Plate1", "A1", "IgG", "k1", "H")]
+    rows = [sequence("m0", "Plate1", "A1", "IgG", "k1", "H")]
     _, mismatched = pair_up(rows, True)
     check("no mismatch from an unread label", mismatched, [])
 
 
-def test_the_molecule_table_puts_the_two_chains_on_one_row():
+def test_the_clone_table_puts_the_two_chains_on_one_row():
     import csv as _csv
-    from annotate import pair_up, write_molecules
+    from annotate import pair_up, write_clones
     work = tempfile.mkdtemp()
-    rows = [clone("m0", "Plate1", "A1", "IGH", "k1", "H"),
-            clone("m1", "Plate1", "A1", "IGL", "k1", "KL"),
-            clone("m2", "Plate1", "A2", "IGH", "k2", "H")]
+    rows = [sequence("m0", "Plate1", "A1", "IGH", "k1", "H"),
+            sequence("m1", "Plate1", "A1", "IGL", "k1", "KL"),
+            sequence("m2", "Plate1", "A2", "IGH", "k2", "H")]
     for r in rows:
         r["aa"] = {"CDR3": "C" + r["declaredChain"]}
         r["vGene"] = r["declaredChain"] + "V1"
     pair_up(rows, True)
-    out = os.path.join(work, "molecules.tsv")
-    write_molecules(out, rows, [{"id": r["id"]} for r in rows])
+    out = os.path.join(work, "clones.tsv")
+    write_clones(out, rows, [{"id": r["id"]} for r in rows])
     table = list(_csv.DictReader(open(out), delimiter="\t"))
-    check("one row per molecule", len(table), 2)
+    check("one row per clone", len(table), 2)
     first = table[0]
     check("paired", first["pairStatus"], "Paired")
     check("heavy side", first["heavy_aa_CDR3"], "CIGH")
@@ -327,43 +327,43 @@ def test_the_molecule_table_puts_the_two_chains_on_one_row():
 
 
 def test_an_ambiguous_well_writes_every_pairing_it_could_be():
-    """Two light chains sequenced means two candidate molecules, not one with
+    """Two light chains sequenced means two candidate clones, not one with
     the second quietly dropped."""
     import csv as _csv
-    from annotate import pair_up, write_molecules
+    from annotate import pair_up, write_clones
     work = tempfile.mkdtemp()
-    rows = [clone("m0", "Plate1", "A5", "IgG", "k1", "H"),
-            clone("m1", "Plate1", "A5", "Kappa", "k1", "KL"),
-            clone("m2", "Plate1", "A5", "Lambda", "k1", "KL")]
+    rows = [sequence("m0", "Plate1", "A5", "IgG", "k1", "H"),
+            sequence("m1", "Plate1", "A5", "Kappa", "k1", "KL"),
+            sequence("m2", "Plate1", "A5", "Lambda", "k1", "KL")]
     for r in rows:
         r["aa"] = {"CDR3": "C" + r["declaredChain"]}
     pair_up(rows, True)
-    out = os.path.join(work, "molecules.tsv")
-    write_molecules(out, rows, [{"id": r["id"]} for r in rows])
+    out = os.path.join(work, "clones.tsv")
+    write_clones(out, rows, [{"id": r["id"]} for r in rows])
     table = list(_csv.DictReader(open(out), delimiter="\t"))
     check("one row per candidate", len(table), 2)
     check("both ambiguous", {r["pairStatus"] for r in table}, {"Ambiguous"})
     check("both lights present", sorted(r["light_chain"] for r in table),
           ["Kappa", "Lambda"])
     check("the heavy is on both", {r["heavy_aa_CDR3"] for r in table}, {"CIgG"})
-    check("keys are distinct", len({r["moleculeKey"] for r in table}), 2)
+    check("keys are distinct", len({r["cloneKey"] for r in table}), 2)
 
 
-def test_a_molecule_with_no_sequence_at_all_is_left_out():
-    from annotate import pair_up, write_molecules
+def test_a_clone_with_no_sequence_at_all_is_left_out():
+    from annotate import pair_up, write_clones
     work = tempfile.mkdtemp()
-    rows = [clone("m0", "Plate1", "A1", "IGH", "k1"),
-            clone("m1", "Plate1", "A2", "IGH", "k2", "H"),
-            clone("m2", "Plate1", "A2", "IGL", "k2", "KL")]
+    rows = [sequence("m0", "Plate1", "A1", "IGH", "k1"),
+            sequence("m1", "Plate1", "A2", "IGH", "k2", "H"),
+            sequence("m2", "Plate1", "A2", "IGL", "k2", "KL")]
     pair_up(rows, True)
-    out = os.path.join(work, "molecules.tsv")
-    write_molecules(out, rows, [{"id": r["id"]} for r in rows])
+    out = os.path.join(work, "clones.tsv")
+    write_clones(out, rows, [{"id": r["id"]} for r in rows])
     table = open(out).read().splitlines()
     check("only the well that sequenced", len(table) - 1, 1)
 
 
-def seq_clone(mol_id, well, chain, observed, nt, aa=None):
-    e = clone(mol_id, "Plate1", well, chain, "k" + well, observed)
+def sequence_nt(seq_id, well, chain, observed, nt, aa=None):
+    e = sequence(seq_id, "Plate1", well, chain, "k" + well, observed)
     e["nt"] = {"VDJRegion": nt}
     e["aa"] = {"CDR3": aa or nt[:6]}
     return e
@@ -379,33 +379,33 @@ def variants_of(rows, properties=()):
     return list(_csv.DictReader(open(out), delimiter="\t"))
 
 
-def test_identical_molecules_collapse_and_keep_every_well():
-    rows = [seq_clone("m0", "A1", "IGH", "H", "ACGTACGT"),
-            seq_clone("m1", "A1", "IGL", "KL", "TTTTTTTT"),
-            seq_clone("m2", "B2", "IGH", "H", "ACGTACGT"),
-            seq_clone("m3", "B2", "IGL", "KL", "TTTTTTTT"),
-            seq_clone("m4", "C3", "IGH", "H", "GGGGGGGG"),
-            seq_clone("m5", "C3", "IGL", "KL", "TTTTTTTT")]
+def test_identical_clones_collapse_and_keep_every_well():
+    rows = [sequence_nt("m0", "A1", "IGH", "H", "ACGTACGT"),
+            sequence_nt("m1", "A1", "IGL", "KL", "TTTTTTTT"),
+            sequence_nt("m2", "B2", "IGH", "H", "ACGTACGT"),
+            sequence_nt("m3", "B2", "IGL", "KL", "TTTTTTTT"),
+            sequence_nt("m4", "C3", "IGH", "H", "GGGGGGGG"),
+            sequence_nt("m5", "C3", "IGL", "KL", "TTTTTTTT")]
     table = variants_of(rows)
-    check("three molecules, two distinct", len(table), 2)
+    check("three clones, two distinct", len(table), 2)
     biggest = table[0]
     check("seen twice", biggest["wellCount"], "2")
     check("both wells listed", biggest["wells"], "Plate1 A1, Plate1 B2")
 
 
-def test_one_chain_differing_makes_a_different_molecule():
-    rows = [seq_clone("m0", "A1", "IGH", "H", "ACGTACGT"),
-            seq_clone("m1", "A1", "IGL", "KL", "TTTTTTTT"),
-            seq_clone("m2", "B2", "IGH", "H", "ACGTACGT"),
-            seq_clone("m3", "B2", "IGL", "KL", "TTTTTTTA")]
+def test_one_chain_differing_makes_a_different_clone():
+    rows = [sequence_nt("m0", "A1", "IGH", "H", "ACGTACGT"),
+            sequence_nt("m1", "A1", "IGL", "KL", "TTTTTTTT"),
+            sequence_nt("m2", "B2", "IGH", "H", "ACGTACGT"),
+            sequence_nt("m3", "B2", "IGL", "KL", "TTTTTTTA")]
     table = variants_of(rows)
     check("exact identity, nothing looser", len(table), 2)
     check("neither is collapsed", sorted(r["wellCount"] for r in table), ["1", "1"])
 
 
 def test_wells_that_disagree_on_a_reading_are_marked():
-    rows = [seq_clone("m0", "A1", "IGH", "H", "ACGTACGT"),
-            seq_clone("m1", "B2", "IGH", "H", "ACGTACGT")]
+    rows = [sequence_nt("m0", "A1", "IGH", "H", "ACGTACGT"),
+            sequence_nt("m1", "B2", "IGH", "H", "ACGTACGT")]
     prop = {"name": "elisa", "type": "Double",
             "values": {"Plate1\u0000A1": "2.5", "Plate1\u0000B2": "0.1"}}
     table = variants_of(rows, [prop])
@@ -418,8 +418,8 @@ def test_wells_that_disagree_on_a_reading_are_marked():
 
 
 def test_wells_that_agree_carry_no_mark():
-    rows = [seq_clone("m0", "A1", "IGH", "H", "ACGTACGT"),
-            seq_clone("m1", "B2", "IGH", "H", "ACGTACGT")]
+    rows = [sequence_nt("m0", "A1", "IGH", "H", "ACGTACGT"),
+            sequence_nt("m1", "B2", "IGH", "H", "ACGTACGT")]
     prop = {"name": "elisa", "type": "Double",
             "values": {"Plate1\u0000A1": "2.5", "Plate1\u0000B2": "2.5"}}
     row = variants_of(rows, [prop])[0]
@@ -428,8 +428,8 @@ def test_wells_that_agree_carry_no_mark():
 
 
 def test_a_label_gets_no_arithmetic():
-    rows = [seq_clone("m0", "A1", "IGH", "H", "ACGTACGT"),
-            seq_clone("m1", "B2", "IGH", "H", "ACGTACGT")]
+    rows = [sequence_nt("m0", "A1", "IGH", "H", "ACGTACGT"),
+            sequence_nt("m1", "B2", "IGH", "H", "ACGTACGT")]
     prop = {"name": "note", "type": "String",
             "values": {"Plate1\u0000A1": "hit", "Plate1\u0000B2": "weak"}}
     row = variants_of(rows, [prop])[0]
@@ -443,9 +443,9 @@ def test_abundance_counts_wells_per_plate():
     from annotate import pair_up, write_abundance
     work = tempfile.mkdtemp()
     # one variant in two wells of Plate1 and one of Plate2, and a second variant
-    rows = [seq_clone("m0", "A1", "IGH", "H", "ACGTACGT"),
-            seq_clone("m1", "B2", "IGH", "H", "ACGTACGT"),
-            seq_clone("m2", "C3", "IGH", "H", "GGGGGGGG")]
+    rows = [sequence_nt("m0", "A1", "IGH", "H", "ACGTACGT"),
+            sequence_nt("m1", "B2", "IGH", "H", "ACGTACGT"),
+            sequence_nt("m2", "C3", "IGH", "H", "GGGGGGGG")]
     rows[1]["plate"] = "Plate2"
     pair_up(rows, True)
     out = os.path.join(work, "abundance.tsv")
