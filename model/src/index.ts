@@ -53,12 +53,20 @@ export const PAIRING_MODE_OPTIONS = [
 ] as const;
 
 export const SPECIES_OPTIONS = [
-  { label: "Human", value: "hsa" },
-  { label: "Mouse", value: "mmu" },
-  { label: "Rat", value: "rat" },
-  { label: "Rabbit", value: "rabbit" },
-  { label: "Rhesus macaque", value: "rhesus" },
-  { label: "Alpaca", value: "alpaca" },
+  { label: "Alpaca (Vicugna pacos)", value: "alpaca" },
+  { label: "Atlantic salmon (Salmo salar)", value: "salmon" },
+  { label: "Blind mole rat (Spalax galili)", value: "spalax" },
+  { label: "Chicken (Gallus gallus)", value: "gallus" },
+  { label: "Cynomolgus macaque (Macaca fascicularis)", value: "mfas" },
+  { label: "Dog (Canis lupus familiaris)", value: "dog" },
+  { label: "Human (Homo sapiens)", value: "hsa" },
+  { label: "Llama (Lama glama)", value: "lama" },
+  { label: "Mouse (Mus musculus)", value: "mmu" },
+  { label: "Pig (Sus scrofa)", value: "pig" },
+  { label: "Rabbit (Oryctolagus cuniculus)", value: "rabbit" },
+  { label: "Rat (Rattus norvegicus)", value: "rat" },
+  { label: "Rhesus macaque (Macaca mulatta)", value: "mmul" },
+  { label: "Sheep (Ovis aries)", value: "sheep" },
 ] as const;
 
 /** What Tracy made of one trace file. */

@@ -22,8 +22,25 @@ export type PairingMode = "plateWell" | "name";
 /**
  * Species MiXCR can align against out of its bundled reference library. Spelled
  * the way MiXCR takes them, so nothing has to translate the value on the way.
+ *
+ * The library does not cover every locus for every species: `alpaca` and
+ * `spalax` hold heavy chains only, and `gallus` has lambda but no kappa.
  */
-export type Species = "hsa" | "mmu" | "rat" | "rabbit" | "rhesus" | "alpaca";
+export type Species =
+  | "alpaca"
+  | "salmon"
+  | "spalax"
+  | "gallus"
+  | "mfas"
+  | "dog"
+  | "hsa"
+  | "lama"
+  | "mmu"
+  | "pig"
+  | "rabbit"
+  | "rat"
+  | "mmul"
+  | "sheep";
 
 /**
  * This block's init-params contract. Everything is optional so a block created by
@@ -52,7 +69,22 @@ export type BlockParams = {
 
 const NUMBERING_SCHEMES: NumberingScheme[] = ["imgt", "kabat", "chothia"];
 const PAIRING_MODES: PairingMode[] = ["plateWell", "name"];
-const SPECIES: Species[] = ["hsa", "mmu", "rat", "rabbit", "rhesus", "alpaca"];
+const SPECIES: Species[] = [
+  "alpaca",
+  "salmon",
+  "spalax",
+  "gallus",
+  "mfas",
+  "dog",
+  "hsa",
+  "lama",
+  "mmu",
+  "pig",
+  "rabbit",
+  "rat",
+  "mmul",
+  "sheep",
+];
 
 function asString(value: unknown, field: string): string | undefined {
   if (value === undefined) return undefined;
