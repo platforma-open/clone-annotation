@@ -22,6 +22,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@milaboratories/graph-maker": "catalog:",
     "@milaboratories/helpers": "catalog:",
     "@platforma-open/milaboratories.clone-annotation.kind": "workspace:*",
     "@platforma-sdk/model": "catalog:"

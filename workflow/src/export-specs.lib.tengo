@@ -18,6 +18,8 @@ RECEPTOR := "IG"
 FEATURES := ["VDJRegion", "FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"]
 ALPHABETS := { aa: "aminoacid", nt: "nucleotide" }
 GENES := { vGene: "VGene", dGene: "DGene", jGene: "JGene" }
+GENE_LABEL := { vGene: "V Gene", dGene: "D Gene", jGene: "J Gene" }
+SUMMARY_LABEL := { min: "Min", median: "Median", max: "Max", mean: "Mean" }
 
 a := func(priority, visibility, extra) {
 	return maps.merge({
@@ -68,7 +70,10 @@ sampleAxis := func(blockId) {
 	}
 }
 
-sequenceColumns := func() {
+// The scheme decides where each region ends. A consumer that checks conserved
+// residues reads it from the region columns: the liabilities block, missing it,
+// expects the cysteine at the start of CDR3, where only MiXCR's CDR3 has it.
+sequenceColumns := func(scheme) {
 	columns := []
 	priority := 46900
 	for chain in CHAINS {
@@ -85,16 +90,21 @@ sequenceColumns := func() {
 					extra["pl7.app/vdj/isMainSequence"] = "true"
 					extra["pl7.app/vdj/isAssemblingFeature"] = "true"
 				}
+				domain := maps.merge({
+					"pl7.app/alphabet": alphabet,
+					"pl7.app/vdj/feature": f
+				}, chainDomain(chain))
+				if f != "VDJRegion" {
+					domain["pl7.app/vdj/numberingSchema"] = scheme
+					extra["pl7.app/vdj/numberingSchema"] = scheme
+				}
 				columns = append(columns, {
 					column: SIDE[chain] + "_" + short + "_" + f,
 					allowNA: true,
 					spec: {
 						name: "pl7.app/vdj/sequence",
 						valueType: "String",
-						domain: maps.merge({
-							"pl7.app/alphabet": alphabet,
-							"pl7.app/vdj/feature": f
-						}, chainDomain(chain)),
+						domain: domain,
 						annotations: a(string(priority),
 							main || f == "CDR3" ? "default" : "optional", extra)
 					}
@@ -120,7 +130,7 @@ geneColumns := func() {
 					domain: maps.merge({ "pl7.app/vdj/reference": reference },
 						chainDomain(chain)),
 					annotations: a(string(priority), "default", {
-						"pl7.app/label": LABEL[chain] + " " + reference,
+						"pl7.app/label": LABEL[chain] + " " + GENE_LABEL[column],
 						"pl7.app/isDiscreteFilter": "true"
 					})
 				}
@@ -142,9 +152,27 @@ pairingColumn := func() {
 			name: "pl7.app/vdj/clonePairing",
 			valueType: "String",
 			domain: {},
-			annotations: a("44000", "default", {
+			annotations: a("44000", "optional", {
 				"pl7.app/label": "Pairing",
 				"pl7.app/isDiscreteFilter": "true"
+			})
+		}
+	}
+}
+
+// The row label other blocks show, named and built as mixcr-clonotyping names
+// and builds its own.
+cloneIdColumn := func() {
+	return {
+		column: "cloneId",
+		allowNA: false,
+		spec: {
+			name: "pl7.app/label",
+			valueType: "String",
+			domain: {},
+			annotations: a("109500", "default", {
+				"pl7.app/label": "Clone Id",
+				"pl7.app/table/fontFamily": "monospace"
 			})
 		}
 	}
@@ -155,7 +183,7 @@ wellsColumn := func() {
 		column: "wells",
 		allowNA: true,
 		spec: {
-			name: "pl7.app/label",
+			name: "pl7.app/vdj/wells",
 			valueType: "String",
 			domain: {},
 			annotations: a("109000", "default", { "pl7.app/label": "Wells" })
@@ -168,11 +196,13 @@ abundanceColumn := func() {
 		column: "wellCount",
 		allowNA: false,
 		spec: {
+			// Platform-wide names, shared with every other block that reports an
+			// abundance. They keep "molecule" where this block says "sequence".
 			name: "pl7.app/vdj/uniqueMoleculeCount",
 			valueType: "Long",
 			domain: {},
 			annotations: a("88000", "default", {
-				"pl7.app/label": "Wells",
+				"pl7.app/label": "Number of Wells",
 				"pl7.app/min": "1",
 				"pl7.app/isAbundance": "true",
 				"pl7.app/abundance/unit": "molecules",
@@ -202,7 +232,7 @@ propertyColumns := func(properties) {
 				valueType: "String",
 				domain: { "pl7.app/vdj/importedProperty/summary": "perWell" },
 				annotations: a("43000", "default",
-					{ "pl7.app/label": p.name + " (per well)" })
+					{ "pl7.app/label": p.name + " (per Well)" })
 			}
 		})
 		columns = append(columns, {
@@ -213,7 +243,7 @@ propertyColumns := func(properties) {
 				valueType: "String",
 				domain: { "pl7.app/vdj/importedProperty/summary": "disagrees" },
 				annotations: a("42900", "optional", {
-					"pl7.app/label": p.name + " disagrees",
+					"pl7.app/label": p.name + " Disagrees",
 					"pl7.app/isDiscreteFilter": "true"
 				})
 			}
@@ -228,7 +258,7 @@ propertyColumns := func(properties) {
 						valueType: "Double",
 						domain: { "pl7.app/vdj/importedProperty/summary": s },
 						annotations: a("42800", s == "max" ? "default" : "optional",
-							{ "pl7.app/label": p.name + " " + s })
+							{ "pl7.app/label": p.name + " " + SUMMARY_LABEL[s] })
 					}
 				})
 			}
@@ -246,9 +276,9 @@ addAll := func(into, more) {
 	return into
 }
 
-variantSettings := func(blockId, properties) {
-	columns := [wellsColumn(), pairingColumn()]
-	columns = addAll(columns, sequenceColumns())
+variantSettings := func(blockId, properties, scheme) {
+	columns := [cloneIdColumn(), wellsColumn(), pairingColumn()]
+	columns = addAll(columns, sequenceColumns(scheme))
 	columns = addAll(columns, geneColumns())
 	columns = addAll(columns, propertyColumns(properties))
 	return {

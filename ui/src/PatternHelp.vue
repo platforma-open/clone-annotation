@@ -13,6 +13,9 @@ const T = {
   tag: "{{:Name}}",
   any: "{{*}}",
   num: "{{n}}",
+  chainList: "{{Chain:12|34}}",
+  optionalTag: "[_{{:Rerun}}]",
+  withDefault: "[_{{Direction=F}}]",
   flat: "{{Plate}}_{{Chain}}_{{Direction}}_{{Well}}.ab1",
   nested: "{{Plate}}/{{Well}}_{{Chain}}-{{:Run}}.ab1",
 };
@@ -33,7 +36,7 @@ const T = {
             <td>
               <code>{{ T.well }}</code>
             </td>
-            <td>The well. Required.</td>
+            <td>The well, <code>A1</code> to <code>P24</code>. Required.</td>
           </tr>
           <tr>
             <td>
@@ -45,7 +48,11 @@ const T = {
             <td>
               <code>{{ T.chain }}</code>
             </td>
-            <td>Heavy, light, or whatever the files call it.</td>
+            <td>
+              <code>IGH</code>, <code>VL</code>, <code>HC</code>, <code>kappa</code>,
+              <code>IgG</code> and similar. For other codes list them: <code>{{ T.chainList }}</code
+              >.
+            </td>
           </tr>
           <tr>
             <td>
@@ -75,6 +82,18 @@ const T = {
               so the plate reads the same for all of them.
             </td>
           </tr>
+          <tr>
+            <td>
+              <code>{{ T.optionalTag }}</code>
+            </td>
+            <td>An optional part can hold a token, such as a rerun suffix.</td>
+          </tr>
+          <tr>
+            <td>
+              <code>{{ T.withDefault }}</code>
+            </td>
+            <td>The value to use where the optional part is absent.</td>
+          </tr>
         </table>
 
         <p>
@@ -82,6 +101,11 @@ const T = {
         </p>
         <p>
           <code>{{ T.nested }}</code>
+        </p>
+
+        <p>
+          A token can appear twice, for a plate in both the folder and the name. A file whose two
+          copies differ is not imported.
         </p>
 
         <p>

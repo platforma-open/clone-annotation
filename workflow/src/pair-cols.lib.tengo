@@ -1,24 +1,26 @@
-// The p-column shape of the molecule table: one row per clone, its two chains
+help := import(":result-help")
+
+// The p-column shape of the pair table: one row per well, its two chains
 // side by side.
 
 FEATURES := ["VDJRegion", "FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"]
 SIDES := ["heavy", "light"]
-PER_SIDE := ["chain", "source", "length", "meanQuality", "regionStatus",
+PER_SIDE := ["chain", "fileChain", "source", "length", "meanQuality", "regionStatus",
 	"vGene", "dGene", "jGene"]
 
 LABELS := {
-	chain: "chain", source: "source", length: "length",
-	meanQuality: "mean Q", regionStatus: "regions",
-	vGene: "V gene", dGene: "D gene", jGene: "J gene"
+	chain: "Chain", fileChain: "Chain in File Name", source: "Source", length: "Length",
+	meanQuality: "Mean Quality", regionStatus: "Regions",
+	vGene: "V Gene", dGene: "D Gene", jGene: "J Gene"
 }
 
 TYPES := {
-	chain: "String", source: "String", length: "Long",
+	chain: "String", fileChain: "String", source: "String", length: "Long",
 	meanQuality: "Double", regionStatus: "String",
 	vGene: "String", dGene: "String", jGene: "String"
 }
 
-// The molecule is read as an antibody: what its two CDR3s are and where they
+// The pair is read as an antibody: what its two CDR3s are and where they
 // came from. Everything else is in the column chooser.
 SHOWN := {
 	plate: true, well: true, pairStatus: true,
@@ -26,10 +28,14 @@ SHOWN := {
 	light_chain: true, light_vGene: true, light_jGene: true, light_aa_CDR3: true
 }
 
+// Plate and Well already say which row it is; the key adds nothing to read.
 axisSpec := {
-	name: "pl7.app/vdj/moleculeKey",
+	name: "pl7.app/vdj/pairId",
 	type: "String",
-	annotations: { "pl7.app/label": "Molecule" }
+	annotations: {
+		"pl7.app/label": "Pair",
+		"pl7.app/table/visibility": "hidden"
+	}
 }
 
 priority := func(column) {
@@ -45,16 +51,21 @@ priority := func(column) {
 }
 
 col := func(column, valueType, label) {
+	annotations := {
+		"pl7.app/label": label,
+		"pl7.app/table/visibility": SHOWN[column] == true ? "default" : "optional",
+		"pl7.app/table/orderPriority": string(priority(column))
+	}
+	description := help.describe(help.PAIR, column)
+	if !is_undefined(description) {
+		annotations["pl7.app/description"] = description
+	}
 	return {
 		column: column,
 		spec: {
 			valueType: valueType,
-			name: "pl7.app/vdj/molecule/" + column,
-			annotations: {
-				"pl7.app/label": label,
-				"pl7.app/table/visibility": SHOWN[column] == true ? "default" : "optional",
-				"pl7.app/table/orderPriority": string(priority(column))
-			}
+			name: "pl7.app/vdj/pair/" + column,
+			annotations: annotations
 		}
 	}
 }
@@ -83,7 +94,7 @@ settings := func() {
 	}
 
 	return {
-		axes: [{ column: "moleculeKey", spec: axisSpec }],
+		axes: [{ column: "pairId", spec: axisSpec }],
 		columns: columns,
 		storageFormat: "Parquet",
 		partitionKeyLength: 0

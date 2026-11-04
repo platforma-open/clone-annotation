@@ -16,14 +16,31 @@ export type Property = {
 /** Region numbering conventions ANARCI implements. */
 export type NumberingScheme = "imgt" | "kabat" | "chothia";
 
-/** What says two files are the two chains of one clone. */
-export type PairingMode = "plateWell" | "name";
+/** Which well verdicts reach the exported variants. */
+export type ExportWells = "passed" | "passedAndWarning" | "all";
 
 /**
  * Species MiXCR can align against out of its bundled reference library. Spelled
  * the way MiXCR takes them, so nothing has to translate the value on the way.
+ *
+ * The library does not cover every locus for every species: `alpaca` and
+ * `spalax` hold heavy chains only, and `gallus` has lambda but no kappa.
  */
-export type Species = "hsa" | "mmu" | "rat" | "rabbit" | "rhesus" | "alpaca";
+export type Species =
+  | "alpaca"
+  | "salmon"
+  | "spalax"
+  | "gallus"
+  | "mfas"
+  | "dog"
+  | "hsa"
+  | "lama"
+  | "mmu"
+  | "pig"
+  | "rabbit"
+  | "rat"
+  | "mmul"
+  | "sheep";
 
 /**
  * This block's init-params contract. Everything is optional so a block created by
@@ -40,19 +57,34 @@ export type BlockParams = {
   /** Region numbering convention; travels with the result as `pl7.app/vdj/numberingSchema`. */
   numberingScheme?: NumberingScheme;
 
-  /** What pairs a clone's chains. Single-domain material needs none of these. */
-  pairingMode?: PairingMode;
-
   /**
    * Which germline library to align against. Regions, chain and translation do
    * not depend on it, so material no library covers still annotates.
    */
   species?: Species;
+
+  /** Which wells' clones are exported, by their QC verdict. */
+  exportWells?: ExportWells;
 };
 
 const NUMBERING_SCHEMES: NumberingScheme[] = ["imgt", "kabat", "chothia"];
-const PAIRING_MODES: PairingMode[] = ["plateWell", "name"];
-const SPECIES: Species[] = ["hsa", "mmu", "rat", "rabbit", "rhesus", "alpaca"];
+const EXPORT_WELLS: ExportWells[] = ["passed", "passedAndWarning", "all"];
+const SPECIES: Species[] = [
+  "alpaca",
+  "salmon",
+  "spalax",
+  "gallus",
+  "mfas",
+  "dog",
+  "hsa",
+  "lama",
+  "mmu",
+  "pig",
+  "rabbit",
+  "rat",
+  "mmul",
+  "sheep",
+];
 
 function asString(value: unknown, field: string): string | undefined {
   if (value === undefined) return undefined;
@@ -71,7 +103,7 @@ function asOneOf<T extends string>(value: unknown, allowed: T[], field: string):
 function parseInitializationParams(value: unknown): BlockParams {
   assertParamsObject(value);
 
-  const { namePattern, qualityThreshold, numberingScheme, pairingMode, species } = value;
+  const { namePattern, qualityThreshold, numberingScheme, species, exportWells } = value;
 
   if (qualityThreshold !== undefined) {
     if (typeof qualityThreshold !== "number" || !Number.isFinite(qualityThreshold))
@@ -83,8 +115,8 @@ function parseInitializationParams(value: unknown): BlockParams {
     namePattern: asString(namePattern, "namePattern"),
     qualityThreshold: qualityThreshold as number | undefined,
     numberingScheme: asOneOf(numberingScheme, NUMBERING_SCHEMES, "numberingScheme"),
-    pairingMode: asOneOf(pairingMode, PAIRING_MODES, "pairingMode"),
     species: asOneOf(species, SPECIES, "species"),
+    exportWells: asOneOf(exportWells, EXPORT_WELLS, "exportWells"),
   };
 }
 

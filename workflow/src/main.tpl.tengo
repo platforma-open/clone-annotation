@@ -7,9 +7,12 @@ pframes := import("@platforma-sdk/workflow-tengo:pframes")
 pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
 xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
 clones := import(":clones")
+sequenceCols := import(":sequence-cols")
+pairCols := import(":pair-cols")
 cloneCols := import(":clone-cols")
-moleculeCols := import(":molecule-cols")
-variantCols := import(":variant-cols")
+plateCols := import(":plate-cols")
+readCols := import(":read-cols")
+wellCols := import(":well-cols")
 exportSpecs := import(":export-specs")
 tracy := import(":tracy")
 
@@ -30,7 +33,8 @@ wf.body(func(args) {
 
 	// Traces are staged under generated ids, not their own names: a path holds
 	// separators and whatever characters the sequencing service used. The
-	// manifest carries the real path back into the report.
+	// manifest carries the real path back into the report, and the plate the
+	// read quality charts facet on.
 	manifest := {}
 	blobs := {}
 	withIds := []
@@ -39,12 +43,16 @@ wf.body(func(args) {
 		fileImports[t.handle] = imp.handle
 
 		id := fmt.sprintf("t%05d", i)
-		manifest[id] = t.path
+		plate := "Unplaced"
+		if !is_undefined(t.fields) {
+			plate = t.fields.plate == "" ? "No plate" : t.fields.plate
+		}
+		manifest[id] = { path: t.path, plate: plate }
 		blobs[id] = imp.file
-		withIds = append(withIds, { id: id, path: t.path })
+		withIds = append(withIds, { id: id, path: t.path, fields: t.fields })
 	}
 
-	grouped := clones.group(traces, args.patternSpec)
+	grouped := clones.group(traces)
 	joined := clones.attach(grouped, args.properties)
 
 	exports := {}
@@ -52,9 +60,9 @@ wf.body(func(args) {
 	outputs := {
 		fileImports: fileImports,
 		clones: joined.clones,
-		unmatched: clones.unmatched(traces, args.patternSpec),
-		clonesWithoutProperties: joined.clonesWithout,
-		valuesWithoutClone: joined.valuesWithoutClone
+		unmatched: clones.unmatched(traces),
+		wellsWithoutProperties: joined.clonesWithout,
+		valuesWithoutWell: joined.valuesWithoutClone
 	}
 
 	if len(traces) > 0 {
@@ -63,10 +71,10 @@ wf.body(func(args) {
 			threshold = defaultQualityThreshold
 		}
 
-		// One molecule per plate, well and chain, naming the reads that should
+		// One sequence per plate, well and chain, naming the reads that should
 		// become it. Built here rather than in the driver so the pattern is read
 		// in one place.
-		plan := clones.molecules(withIds, args.patternSpec, args.pairingMode)
+		plan := clones.sequences(withIds)
 
 		tracySw := assets.importSoftware("@platforma-open/milaboratories.software-tracy:main")
 
@@ -87,6 +95,8 @@ wf.body(func(args) {
 			arg(tracy.planName).
 			saveFileSet("calls", tracy.callsDir + "/.*\\.fastq").
 			saveFile(tracy.reportName).
+			saveFile(tracy.peaksName).
+			saveFile(tracy.readsName).
 			saveFile(tracy.framesName).
 			saveFile(tracy.nucleotideName).
 			saveFileContent(tracy.reportName).
@@ -98,6 +108,15 @@ wf.body(func(args) {
 
 		result := run.run()
 		outputs.traceReport = result.getFileContent(tracy.reportName)
+
+		readsBuilder := pframes.pFrameBuilder()
+		for id, column in xsv.importFile(
+			result.getFile(tracy.readsName), "tsv",
+			readCols.settings(), { splitDataAndSpec: true }
+		) {
+			readsBuilder.add(id, column.spec, column.data)
+		}
+		outputs.readsTable = pframes.exportFrame(readsBuilder.build())
 
 		scheme := args.numberingScheme
 		if is_undefined(scheme) {
@@ -152,7 +171,7 @@ wf.body(func(args) {
 			// Without this the FASTA header is thrown away during alignment and
 			// `-descrsR1` has nothing to export, so the join loses its key.
 			arg("-OsaveOriginalReads=true").
-			// A molecule built from one read covers one end of the domain and
+			// A sequence built from one read covers one end of the domain and
 			// may stop short of CDR3. Dropping those would lose a fifth of a
 			// real plate from the germline half without saying so.
 			arg("--keep-non-CDR3-alignments").
@@ -188,9 +207,9 @@ wf.body(func(args) {
 
 		// Whether pairing applies at all is the scientist's declaration: a
 		// pattern with no chain token says the material is already one
-		// molecule, and nothing waits for a partner it never had.
-		chainsDeclared := !is_undefined(args.patternSpec) &&
-			!is_undefined(args.patternSpec.groups.chain)
+		// sequence, and nothing waits for a partner it never had.
+		chainsDeclared := !is_undefined(args.declaredFields) &&
+			args.declaredFields.chain == true
 
 		annotated := exec.builder().
 			software(annotateSw).
@@ -199,8 +218,10 @@ wf.body(func(args) {
 			addFile("anarci_KL.csv", anarci.getFile("anarci_KL.csv")).
 			addFile("alignments.tsv", exported.getFile("alignments.tsv")).
 			addFile(tracy.nucleotideName, result.getFile(tracy.nucleotideName)).
+			addFile(tracy.peaksName, result.getFile(tracy.peaksName)).
 			arg("--report").arg(tracy.reportName).
-			arg("--molecules").arg(tracy.nucleotideName).
+			arg("--sequences").arg(tracy.nucleotideName).
+			arg("--peaks").arg(tracy.peaksName).
 			arg("--scheme").arg(scheme).
 			arg("--csv_h").arg("anarci_H.csv").
 			arg("--csv_kl").arg("anarci_KL.csv").
@@ -208,20 +229,27 @@ wf.body(func(args) {
 			writeFile("properties.json", is_undefined(args.properties) ? [] : args.properties).
 			arg("--properties").arg("properties.json").
 			arg("--out").arg("annotation.json").
-			arg("--out_tsv").arg("clones.tsv").
-			arg("--out_molecules_tsv").arg("molecules.tsv").
-			arg("--out_variants_tsv").arg("variants.tsv").
+			arg("--out_sequences_tsv").arg("sequences.tsv").
+			arg("--out_pairs_tsv").arg("pairs.tsv").
+			arg("--out_clones_tsv").arg("clones.tsv").
 			arg("--out_abundance_tsv").arg("abundance.tsv").
+			arg("--out_plates_tsv").arg("plates.tsv").
+			arg("--out_wells_tsv").arg("wells.tsv").
 			saveFileContent("annotation.json").
+			saveFile("sequences.tsv").
+			saveFile("pairs.tsv").
 			saveFile("clones.tsv").
-			saveFile("molecules.tsv").
-			saveFile("variants.tsv").
 			saveFile("abundance.tsv").
+			saveFile("plates.tsv").
+			saveFile("wells.tsv").
 			printErrStreamToStdout().
 			inMediumQueue()
 
 		if chainsDeclared {
 			annotated.arg("--chains-declared")
+		}
+		if !is_undefined(args.exportWells) {
+			annotated.arg("--export").arg(args.exportWells)
 		}
 
 		annotatedRun := annotated.run()
@@ -231,37 +259,55 @@ wf.body(func(args) {
 		// The same rows as p-columns, so the page can use the platform's table
 		// with its filtering, sorting and column chooser.
 		imported := xsv.importFile(
-			annotatedRun.getFile("clones.tsv"), "tsv",
-			cloneCols.settings(args.properties),
+			annotatedRun.getFile("sequences.tsv"), "tsv",
+			sequenceCols.settings(args.properties),
 			{ splitDataAndSpec: true }
 		)
 
 		// `splitDataAndSpec` hands back a map of {spec, data} pairs. The frame
 		// builder is what turns those into the `<id>.spec` / `<id>.data` fields
 		// an exported p-frame is made of.
-		clonesBuilder := pframes.pFrameBuilder()
+		sequencesBuilder := pframes.pFrameBuilder()
 		for id, column in imported {
+			sequencesBuilder.add(id, column.spec, column.data)
+		}
+		outputs.sequencesTable = pframes.exportFrame(sequencesBuilder.build())
+
+		pairsBuilder := pframes.pFrameBuilder()
+		for id, column in xsv.importFile(
+			annotatedRun.getFile("pairs.tsv"), "tsv",
+			pairCols.settings(), { splitDataAndSpec: true }
+		) {
+			pairsBuilder.add(id, column.spec, column.data)
+		}
+		outputs.pairsTable = pframes.exportFrame(pairsBuilder.build())
+
+		clonesBuilder := pframes.pFrameBuilder()
+		for id, column in xsv.importFile(
+			annotatedRun.getFile("clones.tsv"), "tsv",
+			cloneCols.settings(args.properties), { splitDataAndSpec: true }
+		) {
 			clonesBuilder.add(id, column.spec, column.data)
 		}
 		outputs.clonesTable = pframes.exportFrame(clonesBuilder.build())
 
-		moleculesBuilder := pframes.pFrameBuilder()
+		platesBuilder := pframes.pFrameBuilder()
 		for id, column in xsv.importFile(
-			annotatedRun.getFile("molecules.tsv"), "tsv",
-			moleculeCols.settings(), { splitDataAndSpec: true }
+			annotatedRun.getFile("plates.tsv"), "tsv",
+			plateCols.settings(), { splitDataAndSpec: true }
 		) {
-			moleculesBuilder.add(id, column.spec, column.data)
+			platesBuilder.add(id, column.spec, column.data)
 		}
-		outputs.moleculesTable = pframes.exportFrame(moleculesBuilder.build())
+		outputs.plateSummaryTable = pframes.exportFrame(platesBuilder.build())
 
-		variantsBuilder := pframes.pFrameBuilder()
+		wellsBuilder := pframes.pFrameBuilder()
 		for id, column in xsv.importFile(
-			annotatedRun.getFile("variants.tsv"), "tsv",
-			variantCols.settings(args.properties), { splitDataAndSpec: true }
+			annotatedRun.getFile("wells.tsv"), "tsv",
+			wellCols.settings(args.properties), { splitDataAndSpec: true }
 		) {
-			variantsBuilder.add(id, column.spec, column.data)
+			wellsBuilder.add(id, column.spec, column.data)
 		}
-		outputs.variantsTable = pframes.exportFrame(variantsBuilder.build())
+		outputs.plateMap = pframes.exportFrame(wellsBuilder.build())
 
 		// What leaves the block. One frame, the record key on axis 0, and the
 		// plate carried only under abundance.
@@ -285,8 +331,8 @@ wf.body(func(args) {
 
 		toPool := pframes.pFrameBuilder()
 		for id, column in xsv.importFile(
-			annotatedRun.getFile("variants.tsv"), "tsv",
-			exportSpecs.variantSettings(blockId, args.properties),
+			annotatedRun.getFile("clones.tsv"), "tsv",
+			exportSpecs.variantSettings(blockId, args.properties, scheme),
 			{ splitDataAndSpec: true }
 		) {
 			toPool.add("variant." + id, trace.inject(column.spec), column.data)

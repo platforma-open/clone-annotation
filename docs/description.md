@@ -44,12 +44,12 @@ says so instead of trusting the label. Sequences MiXCR cannot describe are liste
 
 ## Pairing And Collapse
 
-A clone's heavy and light reads become one molecule, matched on a convention you declare. Single
+A well's heavy and light sequences become one clone, matched on a convention you declare. Single
 domain material passes through whole, and anything that cannot be paired is listed.
 
-Molecules that are letter-for-letter identical collapse into one. Every well behind a molecule stays
-reachable, each measurement keeps its per-well values alongside a summary, and a molecule whose wells
-disagree on a reading is flagged. Collapse is exact identity only — looser grouping is the
+Clones that are letter-for-letter identical collapse into one variant. Every well behind a variant
+stays reachable, each measurement keeps its per-well values alongside a summary, and a variant whose
+wells disagree on a reading is flagged. Collapse is exact identity only — looser grouping is the
 `Redefine Clonotypes` block's job, downstream.
 
 ## Output

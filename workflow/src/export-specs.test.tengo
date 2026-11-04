@@ -5,8 +5,8 @@ exportSpecs := import(":export-specs")
 SEQUENCE_COLUMNS := 32
 // Two chains, V, D and J.
 GENE_COLUMNS := 6
-// Wells and pairing.
-FIXED_COLUMNS := 2
+// Clone Id, wells and pairing.
+FIXED_COLUMNS := 3
 
 countOf := func(settings, name) {
 	n := 0
@@ -19,20 +19,20 @@ countOf := func(settings, name) {
 }
 
 TestVariantSettingsBuildEveryColumn := func() {
-	s := exportSpecs.variantSettings("blk", undefined)
+	s := exportSpecs.variantSettings("blk", undefined, "imgt")
 	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + FIXED_COLUMNS, len(s.columns))
 	test.isEqual(SEQUENCE_COLUMNS, countOf(s, "pl7.app/vdj/sequence"))
 	test.isEqual(GENE_COLUMNS, countOf(s, "pl7.app/vdj/geneHit"))
 }
 
 TestTheRecordKeyIsTheOnlyAxis := func() {
-	s := exportSpecs.variantSettings("blk", undefined)
+	s := exportSpecs.variantSettings("blk", undefined, "imgt")
 	test.isEqual(1, len(s.axes))
 	test.isEqual("pl7.app/variantKey", s.axes[0].spec.name)
 }
 
 TestTheChainsAreSeparatedByDomainNotByAxis := func() {
-	s := exportSpecs.variantSettings("blk", undefined)
+	s := exportSpecs.variantSettings("blk", undefined, "imgt")
 	sides := {}
 	for c in s.columns {
 		if c.spec.name == "pl7.app/vdj/sequence" {
@@ -43,16 +43,32 @@ TestTheChainsAreSeparatedByDomainNotByAxis := func() {
 	test.isEqual(true, sides["B"])
 }
 
+TestRegionsCarryTheScheme := func() {
+	s := exportSpecs.variantSettings("blk", undefined, "kabat")
+	for c in s.columns {
+		if c.spec.name != "pl7.app/vdj/sequence" {
+			continue
+		}
+		f := c.spec.domain["pl7.app/vdj/feature"]
+		if f == "VDJRegion" {
+			test.isTrue(is_undefined(c.spec.domain["pl7.app/vdj/numberingSchema"]), "no scheme on the whole domain")
+		} else {
+			test.isEqual("kabat", c.spec.domain["pl7.app/vdj/numberingSchema"], f)
+			test.isEqual("kabat", c.spec.annotations["pl7.app/vdj/numberingSchema"], f)
+		}
+	}
+}
+
 TestAPropertyBringsItsValuesAndItsSummaries := func() {
 	props := [{ name: "elisa", type: "Double", values: {} }]
-	s := exportSpecs.variantSettings("blk", props)
+	s := exportSpecs.variantSettings("blk", props, "imgt")
 	// values, disagrees, and four summaries.
 	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + FIXED_COLUMNS + 6, len(s.columns))
 }
 
 TestALabelGetsNoSummaries := func() {
 	props := [{ name: "note", type: "String", values: {} }]
-	s := exportSpecs.variantSettings("blk", props)
+	s := exportSpecs.variantSettings("blk", props, "imgt")
 	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + FIXED_COLUMNS + 2, len(s.columns))
 }
 
@@ -71,7 +87,7 @@ TestAbundanceIsPartitionedOnThePlateAxis := func() {
 }
 
 TestVariantColumnsAreNotPartitioned := func() {
-	test.isEqual(0, exportSpecs.variantSettings("blk", undefined).partitionKeyLength)
+	test.isEqual(0, exportSpecs.variantSettings("blk", undefined, "imgt").partitionKeyLength)
 }
 
 // makeTrace eats its first argument as the upstream trace, so a source block

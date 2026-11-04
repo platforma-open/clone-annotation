@@ -1,0 +1,71 @@
+// The p-column shape of the QC plate table: one row per plate, saying how its
+// wells came out. Every well lands in exactly one of Passed, Warning and
+// Failed, so the three add up to Wells.
+
+axisSpec := {
+	name: "pl7.app/vdj/qc/plate",
+	type: "String",
+	annotations: { "pl7.app/label": "Plate" }
+}
+
+COLUMNS := [
+	{ column: "wells", type: "Long", label: "Wells",
+		description: "Wells with at least one file." },
+	{ column: "passed", type: "Long", label: "Passed",
+		description: "Wells where every chain was read, annotated and productive. For paired material, both chains are present and paired." },
+	{ column: "passedShare", type: "Double", label: "Passed, %", format: ".0%",
+		description: "Passed wells out of all wells on the plate." },
+	{ column: "heavyPassed", type: "Long", label: "Heavy Passed",
+		description: "Wells with a heavy chain that was read, annotated and productive, whatever the other chain did." },
+	{ column: "lightPassed", type: "Long", label: "Light Passed",
+		description: "Wells with a light chain that was read, annotated and productive, whatever the other chain did." },
+	{ column: "warning", type: "Long", label: "Warning",
+		description: "Probably usable, but check them first. Reasons: Mixed sequence, Chain label disagrees, Ambiguous pairing." },
+	{ column: "failed", type: "Long", label: "Failed",
+		description: "No usable antibody. Reasons: Low read quality, Annotation failed, Incomplete domain, Non productive, Missing chain. A missing germline is not a failure." },
+	{ column: "usableReadsShare", type: "Double", label: "Usable Reads, %", format: ".0%",
+		description: "Files that kept at least 100 bases after trimming at the quality threshold. A low share points to the sequencing run, not to the antibodies." },
+	{ column: "mergedShare", type: "Double", label: "Merged, %", format: ".0%",
+		description: "Sequences built from both the forward and the reverse read, out of all sequences with a read. A low share points to reads that do not overlap or to one failing primer." },
+	{ column: "mainProblem", type: "String", label: "Main Problem",
+		description: "The most common reason among the failed wells, or among those with a warning where none failed." },
+	{ column: "uniqueAntibodies", type: "Long", label: "Unique Antibodies",
+		description: "Distinct antibodies among the wells that did not fail. One found on two plates counts on each." },
+	{ column: "redundantShare", type: "Double", label: "Clonal Redundancy, %", format: ".0%",
+		description: "Wells that did not fail whose antibody is also in another such well on the plate. A high share means many cells of the same clone." }
+]
+
+settings := func() {
+	columns := []
+	for i, c in COLUMNS {
+		annotations := {
+			"pl7.app/label": c.label,
+			"pl7.app/description": c.description,
+			"pl7.app/table/visibility": "default",
+			"pl7.app/table/orderPriority": string(1000 - 10 * i)
+		}
+		if !is_undefined(c.format) {
+			annotations["pl7.app/format"] = c.format
+		}
+		columns = append(columns, {
+			column: c.column,
+			spec: {
+				valueType: c.type,
+				name: "pl7.app/vdj/qc/" + c.column,
+				annotations: annotations
+			}
+		})
+	}
+
+	return {
+		axes: [{ column: "plate", spec: axisSpec }],
+		columns: columns,
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
+export {
+	axisSpec: axisSpec,
+	settings: settings
+}

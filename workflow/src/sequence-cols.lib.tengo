@@ -1,0 +1,119 @@
+help := import(":result-help")
+
+// The p-column shape of the sequence table: one axis, one column per field.
+
+FEATURES := ["VDJRegion", "FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"]
+
+// Shown by default. Everything else is offered in the table's column chooser
+// rather than taking width nobody asked for.
+SHOWN := {
+	plate: true, well: true, detectedChain: true, pairStatus: true, source: true, meanQuality: true,
+	regionStatus: true, productive: true, mixedPositions: true, vGene: true, jGene: true,
+	aa_VDJRegion: true, aa_CDR3: true, nt_VDJRegion: true, nt_CDR3: true
+}
+
+// Plate and Well already say which row it is; the key adds nothing to read.
+axisSpec := {
+	name: "pl7.app/vdj/sequenceKey",
+	type: "String",
+	annotations: {
+		"pl7.app/label": "Sequence",
+		"pl7.app/table/visibility": "hidden"
+	}
+}
+
+// Higher sorts first. Identity, then what the reads were, then the annotation,
+// then the sequences.
+priority := func(column) {
+	order := {
+		plate: 1000, well: 990, detectedChain: 985, chain: 980,
+		pairStatus: 970, pairedWith: 960, chainMismatch: 950,
+		source: 900, length: 890, meanQuality: 880, qualityScale: 870,
+		mismatches: 860, extraReads: 850, note: 840,
+		regionStatus: 800, observedChain: 790, frame: 780,
+		productive: 775, stopRegion: 774, mixedPositions: 773,
+		vGene: 700, dGene: 690, jGene: 680, mixcrChains: 670, vAlignment: 660
+	}
+	if !is_undefined(order[column]) {
+		return order[column]
+	}
+	return 500
+}
+
+col := func(column, valueType, label) {
+	annotations := {
+		"pl7.app/label": label,
+		"pl7.app/table/visibility": SHOWN[column] == true ? "default" : "optional",
+		"pl7.app/table/orderPriority": string(priority(column))
+	}
+	description := help.describe(help.SEQUENCE, column)
+	if !is_undefined(description) {
+		annotations["pl7.app/description"] = description
+	}
+	return {
+		column: column,
+		spec: {
+			valueType: valueType,
+			name: "pl7.app/vdj/sequence/" + column,
+			annotations: annotations
+		}
+	}
+}
+
+// `properties` are the sheet's mapped columns. They arrive under the names the
+// scientist's sheet used, so the p-column name is positional and the label
+// carries the real one.
+settings := func(properties) {
+	columns := [
+		col("plate", "String", "Plate"),
+		col("well", "String", "Well"),
+		col("detectedChain", "String", "Chain"),
+		col("chain", "String", "Chain in File Name"),
+		col("pairStatus", "String", "Pairing"),
+		col("pairedWith", "String", "Paired With"),
+		col("chainMismatch", "String", "Chain Mismatch"),
+		col("source", "String", "Source"),
+		col("length", "Long", "Length"),
+		col("meanQuality", "Double", "Mean Quality"),
+		col("qualityScale", "String", "Quality Scale"),
+		col("mismatches", "Long", "Disagreements"),
+		col("extraReads", "Long", "Unused Reads"),
+		col("note", "String", "Note"),
+		col("regionStatus", "String", "Regions"),
+		col("observedChain", "String", "ANARCI Chain"),
+		col("frame", "Long", "Frame"),
+		col("productive", "String", "Productive"),
+		col("stopRegion", "String", "Stop Codon in"),
+		col("mixedPositions", "Long", "Mixed Positions in CDR3"),
+		col("vGene", "String", "V Gene"),
+		col("dGene", "String", "D Gene"),
+		col("jGene", "String", "J Gene"),
+		col("mixcrChains", "String", "MiXCR Chain"),
+		col("vAlignment", "String", "Departures from Germline")
+	]
+
+	for f in FEATURES {
+		columns = append(columns, col("aa_" + f, "String", f + " aa"))
+	}
+	for f in FEATURES {
+		columns = append(columns, col("nt_" + f, "String", f + " nt"))
+	}
+
+	if !is_undefined(properties) {
+		for i, p in properties {
+			columns = append(columns, col("prop_" + string(i), p.type, p.name))
+		}
+	}
+
+	return {
+		axes: [{ column: "sequenceKey", spec: axisSpec }],
+		columns: columns,
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
+export {
+	axisSpec: axisSpec,
+	settings: settings
+}

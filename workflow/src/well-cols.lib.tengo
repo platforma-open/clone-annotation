@@ -1,0 +1,74 @@
+// The p-column shape of the plate map: one row per well of every plate, keyed by
+// plate, row and column. The heatmap takes its X and Y only from the value's own
+// axes, so the row and the column are axes rather than columns.
+
+PLATE_AXIS := {
+	column: "plate",
+	spec: { name: "pl7.app/vdj/plateMap/plate", type: "String", annotations: { "pl7.app/label": "Plate" } }
+}
+ROW_AXIS := {
+	column: "row",
+	spec: { name: "pl7.app/vdj/plateMap/row", type: "String", annotations: { "pl7.app/label": "Row" } }
+}
+COLUMN_AXIS := {
+	column: "column",
+	spec: { name: "pl7.app/vdj/plateMap/column", type: "Int", annotations: { "pl7.app/label": "Column" } }
+}
+
+// Palette indexes into GraphMaker's "bright" palette: green, orange, red, grey.
+VERDICT_COLORS := "{\"name\":\"bright\",\"mapping\":{\"Passed\":0,\"Warning\":2,\"Failed\":7,\"No file\":8}}"
+VERDICT_ORDER := "[\"Passed\",\"Warning\",\"Failed\",\"No file\"]"
+
+SIDE_FIELDS := [
+	{ field: "meanQuality", type: "Double", label: "Mean Quality" },
+	{ field: "length", type: "Long", label: "Length" },
+	{ field: "mixedPositions", type: "Long", label: "Mixed Positions in CDR3" }
+]
+
+col := func(column, valueType, label, extra) {
+	annotations := { "pl7.app/label": label }
+	for k, v in extra {
+		annotations[k] = v
+	}
+	return {
+		column: column,
+		allowNA: true,
+		spec: {
+			valueType: valueType,
+			name: "pl7.app/vdj/plateMap/" + column,
+			annotations: annotations
+		}
+	}
+}
+
+settings := func(properties) {
+	columns := [
+		col("verdict", "String", "QC Verdict", {
+			"pl7.app/graph/palette": VERDICT_COLORS,
+			"pl7.app/discreteValues": VERDICT_ORDER
+		}),
+		col("reason", "String", "QC Reason", {})
+	]
+	for side in ["heavy", "light"] {
+		title := side == "heavy" ? "Heavy" : "Light"
+		for f in SIDE_FIELDS {
+			columns = append(columns, col(side + "_" + f.field, f.type, title + " " + f.label, {}))
+		}
+	}
+	if !is_undefined(properties) {
+		for i, p in properties {
+			columns = append(columns,
+				col("prop_" + string(i), p.type, p.name, {}))
+		}
+	}
+	return {
+		axes: [PLATE_AXIS, ROW_AXIS, COLUMN_AXIS],
+		columns: columns,
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
+export {
+	settings: settings
+}

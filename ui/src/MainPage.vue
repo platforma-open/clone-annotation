@@ -2,8 +2,8 @@
 import {
   DEFAULT_NAME,
   DEFAULT_QUALITY_THRESHOLD,
+  EXPORT_WELLS_OPTIONS,
   NUMBERING_SCHEME_OPTIONS,
-  PAIRING_MODE_OPTIONS,
   SPECIES_OPTIONS,
 } from "@platforma-open/milaboratories.clone-annotation.model";
 import {
@@ -14,7 +14,7 @@ import {
   PlNumberField,
   PlSlideModal,
 } from "@platforma-sdk/ui-vue";
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import { useApp } from "./app";
 import FilesTable from "./FilesTable.vue";
 import ImportDialog from "./ImportDialog.vue";
@@ -28,8 +28,6 @@ const compiled = computed(() => compilePattern(app.model.data.namePattern ?? "")
 const files = computed(() =>
   describeSelection(app.model.data.traceFiles ?? [], compiled.value.pattern),
 );
-
-const settingsOpen = ref(false);
 </script>
 
 <template>
@@ -50,7 +48,9 @@ const settingsOpen = ref(false);
       <PlBtnGhost icon="table" @click.stop="() => (app.showPropertiesDialog = true)">
         Add Properties
       </PlBtnGhost>
-      <PlBtnGhost icon="settings" @click.stop="() => (settingsOpen = true)"> Settings </PlBtnGhost>
+      <PlBtnGhost icon="settings" @click.stop="() => (app.showSettings = true)">
+        Settings
+      </PlBtnGhost>
     </template>
 
     <div class="grid-area">
@@ -61,8 +61,34 @@ const settingsOpen = ref(false);
     <PropertiesDialog v-if="app.showPropertiesDialog" />
   </PlBlockPage>
 
-  <PlSlideModal v-model="settingsOpen" close-on-outside-click shadow>
+  <PlSlideModal v-model="app.showSettings" close-on-outside-click shadow>
     <template #title>Settings</template>
+
+    <PlDropdown
+      v-model="app.model.data.species"
+      :options="SPECIES_OPTIONS"
+      :required="true"
+      :error="!app.model.data.species ? 'Species is required' : undefined"
+      label="Species"
+    >
+      <template #tooltip>
+        The germline library to align against. Regions, chain and translation do not depend on it,
+        so material no library covers still annotates.
+      </template>
+    </PlDropdown>
+
+    <PlDropdown
+      v-model="app.model.data.numberingScheme"
+      :options="NUMBERING_SCHEME_OPTIONS"
+      :required="true"
+      :error="!app.model.data.numberingScheme ? 'Numbering scheme is required' : undefined"
+      label="Numbering scheme"
+    >
+      <template #tooltip>
+        Where the framework and CDR boundaries fall. The three conventions draw them differently, so
+        pick the one your data and collaborators use.
+      </template>
+    </PlDropdown>
 
     <PlNumberField
       v-model="app.model.data.qualityThreshold"
@@ -72,38 +98,21 @@ const settingsOpen = ref(false);
       :placeholder="String(DEFAULT_QUALITY_THRESHOLD)"
     >
       <template #tooltip>
-        Per-position Phred floor. Each read is trimmed to its longest stretch at or above it. The
-        default, 20, means one wrong base in a hundred.
+        The error rate allowed in the part of each read that is kept. At 20, the default, that is
+        about 1 error in 100 bases. The block cuts off the read ends and keeps the stretch that
+        stays within this rate. Raise it for fewer errors, or lower it to keep longer reads.
       </template>
     </PlNumberField>
 
     <PlDropdown
-      v-model="app.model.data.numberingScheme"
-      :options="NUMBERING_SCHEME_OPTIONS"
-      label="Numbering scheme"
+      v-model="app.model.data.exportWells"
+      :options="EXPORT_WELLS_OPTIONS"
+      :required="true"
+      :error="!app.model.data.exportWells ? 'Export is required' : undefined"
+      label="Export"
     >
       <template #tooltip>
-        Where the framework and CDR boundaries fall. The three conventions draw them differently, so
-        pick the one your data and collaborators use.
-      </template>
-    </PlDropdown>
-
-    <PlDropdown
-      v-model="app.model.data.pairingMode"
-      :options="PAIRING_MODE_OPTIONS"
-      label="Pairing"
-    >
-      <template #tooltip>
-        What says two files are the two chains of one clone. Where each chain sits in its own
-        folder, read the real plate out of the folder name using an optional section in the file
-        pattern — see the help beside the pattern field.
-      </template>
-    </PlDropdown>
-
-    <PlDropdown v-model="app.model.data.species" :options="SPECIES_OPTIONS" label="Species">
-      <template #tooltip>
-        The germline library to align against. Regions, chain and translation do not depend on it,
-        so material no library covers still annotates.
+        Which wells to pass on to the next blocks, based on their verdict in Plate View.
       </template>
     </PlDropdown>
   </PlSlideModal>

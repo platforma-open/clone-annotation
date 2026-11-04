@@ -115,17 +115,17 @@ const columnDefs = computed<ColDef<FileRow>[]>(() => [
           valueGetter: (row) => row.data?.read?.length,
         } satisfies ColDef<FileRow>,
         {
-          headerName: "Usable",
-          width: 100,
+          headerName: "Trimmed Length",
+          width: 130,
           type: "numericColumn",
-          headerTooltip: "Bases in the longest stretch at or above the quality threshold",
+          headerTooltip: "Bases kept after trimming the read at the quality threshold",
           valueGetter: (row) => row.data?.read?.usableLength,
         } satisfies ColDef<FileRow>,
         {
-          headerName: "Mean Q",
+          headerName: "Mean Quality",
           width: 100,
           type: "numericColumn",
-          headerTooltip: "Mean Phred over that stretch",
+          headerTooltip: "Mean Phred quality of the trimmed read",
           valueGetter: (row) => row.data?.read?.meanQuality,
         } satisfies ColDef<FileRow>,
         {

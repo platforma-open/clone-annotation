@@ -1,0 +1,90 @@
+text := import("text")
+
+// Column tooltips for the Sequences, Pairs and Clones tables, kept in one place
+// because a pair or a clone shows each of its sides with the sequence's columns.
+
+// Keyed by the Sequences table's column name.
+SEQUENCE := {
+	detectedChain: "The chain the sequence shows. MiXCR's chain where it agrees with ANARCI, otherwise ANARCI's.",
+	chain: "The chain the file name gives. Used to group reads, and checked against the sequence.",
+	pairStatus: "How this chain relates to the other chain in its well: Paired, Unpaired, Ambiguous, Single domain or No sequence.",
+	pairedWith: "The other chain of the same well, when the two are paired.",
+	chainMismatch: "\"yes\" when the file name says one chain and the sequence reads as another.",
+	source: "Where the sequence came from: merged from both reads, or a single read. \"none\" means no read survived trimming.",
+	meanQuality: "Mean Phred quality of the sequence.",
+	qualityScale: "\"consensus\" when the quality comes from merging both reads, \"read\" when it comes from one read.",
+	mismatches: "Positions where the forward and reverse reads overlap but call different bases.",
+	extraReads: "Extra files for the same well, chain and direction. Only the first one is used.",
+	note: "Why the block made a choice for this sequence, for example a merge that failed.",
+	regionStatus: "\"Annotated\" when ANARCI found a variable domain, \"Failed\" when it found none.",
+	observedChain: "The chain class ANARCI found: H, KL (kappa or lambda), A, B, G or D.",
+	frame: "The reading frame the domain was found in. 0 to 2 read the sequence as it is, and 3 to 5 read its reverse complement.",
+	productive: "\"yes\" when the domain is complete and has no stop codon, \"no\" when it has a stop codon. Empty when the domain is incomplete.",
+	stopRegion: "The first region that holds a stop codon.",
+	mixedPositions: "CDR3 positions where every read shows a second peak. More than 5 gives a Warning.",
+	vGene: "The best germline gene MiXCR found. Empty when no germline reference matched.",
+	dGene: "The best germline gene MiXCR found. Empty when no germline reference matched.",
+	jGene: "The best germline gene MiXCR found. Empty when no germline reference matched.",
+	mixcrChains: "The chain MiXCR aligned the sequence to.",
+	vAlignment: "Where the V region differs from its germline gene, as MiXCR reports it."
+}
+
+// A side of a pair or a clone, keyed by its field. The side's `chain` is the
+// detected chain and its `fileChain` the label from the file name.
+SIDE := {
+	chain: SEQUENCE.detectedChain,
+	fileChain: SEQUENCE.chain,
+	source: SEQUENCE.source,
+	meanQuality: SEQUENCE.meanQuality,
+	regionStatus: SEQUENCE.regionStatus,
+	vGene: SEQUENCE.vGene,
+	dGene: SEQUENCE.dGene,
+	jGene: SEQUENCE.jGene
+}
+
+// Keyed by the Clones table's column name. The Clone Id goes without one.
+CLONE := {
+	wells: "The wells this clone was found in.",
+	wellCount: "How many wells this clone was found in.",
+	pairStatus: "The pairing of the first well behind the clone.",
+	qcVerdict: "The best verdict among the wells behind the clone.",
+	qcReason: "The first reason of that best well. Empty when it passed."
+}
+
+// A sheet property on a clone, keyed by the column's suffix.
+PROPERTY := {
+	values: "Each well's value from the sheet, in well order.",
+	disagrees: "\"yes\" when the wells give different values.",
+	min: "The lowest of the wells' values.",
+	median: "The median of the wells' values.",
+	max: "The highest of the wells' values.",
+	mean: "The mean of the wells' values."
+}
+
+PAIR := { pairStatus: SEQUENCE.pairStatus }
+
+// The tooltip for a column of a table whose own columns are in `own`: its own
+// entry, else that of its side's field (`heavy_source`), else that of its
+// property suffix (`prop_0_max`). Undefined where none applies.
+describe := func(own, column) {
+	if !is_undefined(own[column]) {
+		return own[column]
+	}
+	for side in ["heavy_", "light_"] {
+		if text.has_prefix(column, side) {
+			return SIDE[column[len(side):]]
+		}
+	}
+	if text.has_prefix(column, "prop_") {
+		parts := text.split(column, "_")
+		return PROPERTY[parts[len(parts) - 1]]
+	}
+	return undefined
+}
+
+export {
+	SEQUENCE: SEQUENCE,
+	PAIR: PAIR,
+	CLONE: CLONE,
+	describe: describe
+}
