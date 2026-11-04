@@ -423,12 +423,24 @@ def sequence_key(entry):
     return "|".join([entry["plate"], entry["well"], entry["declaredChain"]])
 
 
+def sequence_reason(entry, sequence):
+    """The first reason this chain on its own fails or gets a warning, or "Passed"."""
+    if sequence.get("source") == "none":
+        return "Low read quality"
+    if not entry.get("observedChain"):
+        return "Annotation failed"
+    failed, warning = chain_reasons(entry)
+    reasons = ([r for r in FAILED_REASONS if r in failed]
+               + [r for r in WARNING_REASONS if r in warning])
+    return reasons[0] if reasons else PASSED
+
+
 def write_sequences(path, annotations, sequences, properties):
     """One row per sequence, flat, ready for xsv to turn into p-columns."""
     by_id = {m["id"]: m for m in sequences}
     names = [p["name"] for p in properties]
     header = (
-        ["sequenceKey", "plate", "well", "detectedChain", "chain", "pairStatus", "pairedWith", "chainMismatch",
+        ["sequenceKey", "plate", "well", "detectedChain", "chain", "qcReason", "pairStatus", "pairedWith", "chainMismatch",
          "source", "length", "meanQuality", "qualityScale", "mismatches", "extraReads",
          "note", "regionStatus", "observedChain", "frame", "productive", "stopRegion",
          "mixedPositions", "vGene", "dGene", "jGene", "mixcrChains", "vAlignment"]
@@ -448,7 +460,7 @@ def write_sequences(path, annotations, sequences, properties):
             well_key = entry["plate"] + "\u0000" + entry["well"]
             writer.writerow(
                 [sequence_key(entry), entry["plate"], entry["well"], detected_chain(entry),
-                 entry["declaredChain"],
+                 entry["declaredChain"], sequence_reason(entry, sequence),
                  entry.get("pairStatus", ""), entry.get("pairedWith", ""),
                  "yes" if entry.get("chainMismatch") else "",
                  sequence.get("source", ""), sequence.get("length", ""),
@@ -530,7 +542,7 @@ def candidate_pairings(annotations):
     return out
 
 
-def write_pairs(path, annotations, sequences):
+def write_pairs(path, annotations, sequences, verdicts=()):
     """One row per pair: its two chains, side by side.
 
     R18 asks for the clone to be what goes forward rather than its parts.
@@ -539,7 +551,8 @@ def write_pairs(path, annotations, sequences):
     leave it out.
     """
     by_id = {m["id"]: m for m in sequences}
-    header = ["pairId", "plate", "well", "pairStatus"] + pair_columns()
+    by_well = {(w["plate"], w["well"]): w for w in verdicts}
+    header = ["pairId", "plate", "well", "pairStatus", "qcReason"] + pair_columns()
     used = set()
 
     def unique(key):
@@ -556,7 +569,8 @@ def write_pairs(path, annotations, sequences):
         for pairing in candidate_pairings(annotations):
             key = "|".join([pairing["plate"], pairing["well"]])
             writer.writerow(
-                [unique(key), pairing["plate"], pairing["well"], pairing["status"]]
+                [unique(key), pairing["plate"], pairing["well"], pairing["status"],
+                 by_well.get((pairing["plate"], pairing["well"]), {}).get("reason", "")]
                 + side_cells(pairing["heavy"], by_id) + side_cells(pairing["light"], by_id)
             )
 
@@ -792,7 +806,7 @@ def well_verdicts(annotations, sequences):
             "plate": plate,
             "well": well,
             "verdict": verdict,
-            "reason": reasons[0] if reasons else "",
+            "reason": reasons[0] if reasons else PASSED,
             "reasons": reasons,
             "failedReasons": failed_reasons,
             "warningReasons": warning_reasons,
@@ -978,7 +992,7 @@ def write_wells(path, verdicts, annotations, sequences, properties):
                     row = row_label(r)
                     well, w = placed.get((plate, (row, c)), (None, None))
                     cells = [plate or NO_PLATE, row, c,
-                             w["verdict"] if w else NO_FILE, w["reason"] if w else ""]
+                             w["verdict"] if w else NO_FILE, w["reason"] if w else NO_FILE]
                     for side in ("heavy", "light"):
                         entry = sides.get((plate, well, side)) if well else None
                         sequence = by_id.get(entry["id"], {}) if entry else {}
@@ -1096,11 +1110,11 @@ def main(argv=None):
     properties = (
         json.loads(pathlib.Path(args.properties).read_text()) if args.properties else []
     )
+    verdicts = well_verdicts(annotations, sequences)
     if args.out_sequences_tsv:
         write_sequences(args.out_sequences_tsv, annotations, sequences, properties)
     if args.out_pairs_tsv:
-        write_pairs(args.out_pairs_tsv, annotations, sequences)
-    verdicts = well_verdicts(annotations, sequences)
+        write_pairs(args.out_pairs_tsv, annotations, sequences, verdicts)
     accepted = accepted_wells(verdicts, args.export)
     collapse = {}
     if args.out_clones_tsv:

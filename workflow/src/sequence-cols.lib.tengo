@@ -7,7 +7,7 @@ FEATURES := ["VDJRegion", "FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"]
 // Shown by default. Everything else is offered in the table's column chooser
 // rather than taking width nobody asked for.
 SHOWN := {
-	plate: true, well: true, detectedChain: true, pairStatus: true, source: true, meanQuality: true,
+	plate: true, well: true, detectedChain: true, qcReason: true, pairStatus: true, source: true, meanQuality: true,
 	regionStatus: true, productive: true, mixedPositions: true, vGene: true, jGene: true,
 	aa_VDJRegion: true, aa_CDR3: true, nt_VDJRegion: true, nt_CDR3: true
 }
@@ -26,7 +26,7 @@ axisSpec := {
 // then the sequences.
 priority := func(column) {
 	order := {
-		plate: 1000, well: 990, detectedChain: 985, chain: 980,
+		plate: 1000, well: 990, detectedChain: 985, chain: 980, qcReason: 975,
 		pairStatus: 970, pairedWith: 960, chainMismatch: 950,
 		source: 900, length: 890, meanQuality: 880, qualityScale: 870,
 		mismatches: 860, extraReads: 850, note: 840,
@@ -69,6 +69,7 @@ settings := func(properties) {
 		col("well", "String", "Well"),
 		col("detectedChain", "String", "Chain"),
 		col("chain", "String", "Chain in File Name"),
+		col("qcReason", "String", "QC Reason"),
 		col("pairStatus", "String", "Pairing"),
 		col("pairedWith", "String", "Paired With"),
 		col("chainMismatch", "String", "Chain Mismatch"),

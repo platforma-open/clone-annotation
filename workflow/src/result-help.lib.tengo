@@ -7,6 +7,7 @@ text := import("text")
 SEQUENCE := {
 	detectedChain: "The chain the sequence shows. MiXCR's chain where it agrees with ANARCI, otherwise ANARCI's.",
 	chain: "The chain the file name gives. Used to group reads, and checked against the sequence.",
+	qcReason: "The first reason this chain fails or gets a warning, judged on its own. Passed when nothing is wrong.",
 	pairStatus: "How this chain relates to the other chain in its well: Paired, Unpaired, Ambiguous, Single domain or No sequence.",
 	pairedWith: "The other chain of the same well, when the two are paired.",
 	chainMismatch: "\"yes\" when the file name says one chain and the sequence reads as another.",
@@ -48,7 +49,7 @@ CLONE := {
 	wellCount: "How many wells this clone was found in.",
 	pairStatus: "The pairing of the first well behind the clone.",
 	qcVerdict: "The best verdict among the wells behind the clone.",
-	qcReason: "The first reason of that best well. Empty when it passed."
+	qcReason: "The first reason of that best well. Passed when nothing is wrong."
 }
 
 // A sheet property on a clone, keyed by the column's suffix.
@@ -61,7 +62,10 @@ PROPERTY := {
 	mean: "The mean of the wells' values."
 }
 
-PAIR := { pairStatus: SEQUENCE.pairStatus }
+PAIR := {
+	pairStatus: SEQUENCE.pairStatus,
+	qcReason: "The first reason of the well. Passed when nothing is wrong."
+}
 
 // The tooltip for a column of a table whose own columns are in `own`: its own
 // entry, else that of its side's field (`heavy_source`), else that of its

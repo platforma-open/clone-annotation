@@ -251,6 +251,24 @@ def sequence(seq_id, plate, well, chain, pair_key, observed=None):
     return e
 
 
+def test_a_sequence_and_a_pair_carry_their_qc_reason():
+    import csv as _csv
+    from annotate import pair_up, sequence_reason, write_pairs
+    heavy = dict(sequence("m0", "P1", "A1", "IGH", "k1", "H"), status="Annotated",
+                 domainComplete=True)
+    check("a clean chain", sequence_reason(heavy, {"source": "merged"}), "Passed")
+    check("no read", sequence_reason(heavy, {"source": "none"}), "Low read quality")
+    stopped = dict(heavy, stopRegion="CDR3")
+    check("its own reason", sequence_reason(stopped, {"source": "merged"}), "Non productive")
+    rows = [heavy]
+    pair_up(rows, True)
+    verdicts = [{"plate": "P1", "well": "A1", "verdict": "Failed", "reason": "Missing chain"}]
+    out = os.path.join(tempfile.mkdtemp(), "pairs.tsv")
+    write_pairs(out, rows, [{"id": "m0"}], verdicts)
+    table = list(_csv.DictReader(open(out), delimiter="\t"))
+    check("the pair takes the well's reason", table[0]["qcReason"], "Missing chain")
+
+
 def test_the_plate_map_fills_every_well_and_splits_the_chains():
     import csv as _csv
     from annotate import write_wells
@@ -648,7 +666,7 @@ def verdicts_of(rows, sources=None):
 def test_a_well_without_germline_is_good():
     rows = [described("m0", "P1", "A1", "IGH", "H", pairStatus="Single domain")]
     v = verdicts_of(rows)[("P1", "A1")]
-    check("no vGene, still good", (v["verdict"], v["reason"]), ("Passed", ""))
+    check("no vGene, still good", (v["verdict"], v["reason"]), ("Passed", "Passed"))
 
 
 def test_a_well_whose_reads_all_died_failed_for_that_reason():

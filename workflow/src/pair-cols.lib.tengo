@@ -23,7 +23,7 @@ TYPES := {
 // The pair is read as an antibody: what its two CDR3s are and where they
 // came from. Everything else is in the column chooser.
 SHOWN := {
-	plate: true, well: true, pairStatus: true,
+	plate: true, well: true, pairStatus: true, qcReason: true,
 	heavy_chain: true, heavy_vGene: true, heavy_jGene: true, heavy_aa_CDR3: true,
 	light_chain: true, light_vGene: true, light_jGene: true, light_aa_CDR3: true
 }
@@ -40,7 +40,7 @@ axisSpec := {
 
 priority := func(column) {
 	order := {
-		plate: 1000, well: 990, pairStatus: 980,
+		plate: 1000, well: 990, pairStatus: 980, qcReason: 975,
 		heavy_chain: 910, heavy_vGene: 900, heavy_jGene: 890, heavy_aa_CDR3: 880,
 		light_chain: 875, light_vGene: 870, light_jGene: 860, light_aa_CDR3: 850
 	}
@@ -74,7 +74,8 @@ settings := func() {
 	columns := [
 		col("plate", "String", "Plate"),
 		col("well", "String", "Well"),
-		col("pairStatus", "String", "Pairing")
+		col("pairStatus", "String", "Pairing"),
+		col("qcReason", "String", "QC Reason")
 	]
 
 	for side in SIDES {

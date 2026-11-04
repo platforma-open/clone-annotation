@@ -174,7 +174,7 @@ export type WellQc = {
   plate: string;
   well: string;
   verdict: WellVerdict;
-  /** The first of `reasons`; empty for a passed well. */
+  /** The first of `reasons`; "Passed" for a well with none. */
   reason: string;
   /** Every reason that applies, failures first, in priority order. */
   reasons: string[];
