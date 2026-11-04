@@ -75,16 +75,6 @@ elisa := func(pairs) {
 	return [{ name: "elisa", type: "Double", values: pairs }]
 }
 
-TestNormalizeWellIgnoresZeroPadding := func() {
-	test.isEqual("A1", clones.normalizeWell("A01"))
-	test.isEqual("A1", clones.normalizeWell("A1"))
-	test.isEqual("H12", clones.normalizeWell(" h012 "))
-}
-
-TestNormalizeWellLeavesANonWellAlone := func() {
-	test.isEqual("chamber-3", clones.normalizeWell(" chamber-3 "))
-}
-
 TestAttachPutsAValueOnItsClone := func() {
 	cs := clones.group([trace("Plate1_IGH_A1.ab1")])
 	vals := {}
@@ -94,8 +84,10 @@ TestAttachPutsAValueOnItsClone := func() {
 	test.isEqual(0, len(out.clonesWithout))
 }
 
+// Zero padding is the model's to remove: it normalises the well where it reads
+// the file name. What arrives here is already A1.
 TestAttachMatchesAcrossZeroPadding := func() {
-	cs := clones.group([trace("Plate1_IGH_A01.ab1")])
+	cs := clones.group([trace("Plate1_IGH_A1.ab1")])
 	vals := {}
 	vals[key("Plate1", "A1")] = "2.538"
 	out := clones.attach(cs, elisa(vals))

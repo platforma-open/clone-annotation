@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { highlightMatch, PathPattern } from "../path_pattern";
+import { highlightMatch, normalizeWell, PathPattern } from "../path_pattern";
 
 describe("PathPattern", () => {
   test("binds the plate to a directory segment", () => {
@@ -312,5 +312,17 @@ describe("where optional sections sit", () => {
     const m = p.match("x_A1_R.ab1");
     expect(m?.well.value).toBe("A1");
     expect(m?.direction?.value).toBe("R");
+  });
+});
+
+describe("normalizeWell", () => {
+  test("zero padding and case do not make a different well", () => {
+    expect(normalizeWell("A01")).toBe("A1");
+    expect(normalizeWell("a1")).toBe("A1");
+    expect(normalizeWell("h012")).toBe("H12");
+  });
+
+  test("anything that is not a well is left alone", () => {
+    expect(normalizeWell(" chamber-3 ")).toBe("chamber-3");
   });
 });

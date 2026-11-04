@@ -1,5 +1,5 @@
 import type { Property, PropertyType } from "@platforma-open/milaboratories.clone-annotation.model";
-import { normalizeWell } from "./sheet";
+import { normalizeWell } from "@platforma-open/milaboratories.clone-annotation.model";
 import type { Sheet } from "./sheet";
 
 /** Keyed on plate and well together: the same well number recurs on every plate. */

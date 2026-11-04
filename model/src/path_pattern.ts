@@ -118,6 +118,17 @@ const DEFAULT_VALUES: Record<Field, string> = {
   direction: oneOf(DIRECTION_WORDS, anyCase),
 };
 
+/**
+ * A well as every layer of the block keys it: A1, a01 and A01 are one well.
+ * Applied once where the file name is read and once where the sheet is read, so
+ * a property finds its well however either side wrote it. Anything that is not
+ * a row letter and a number is kept as it stands.
+ */
+export function normalizeWell(well: string): string {
+  const m = well.trim().match(/^([A-Za-z]+)0*(\d+)$/);
+  return m ? `${m[1]!.toUpperCase()}${m[2]}` : well.trim();
+}
+
 /** Whether the field's own token, with no list, would read this value. */
 export function fieldAccepts(field: Field, value: string): boolean {
   return new RegExp(`^(?:${DEFAULT_VALUES[field]})$`).test(value);

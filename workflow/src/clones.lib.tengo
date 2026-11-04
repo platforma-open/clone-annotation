@@ -1,7 +1,4 @@
-regexp := import("@platforma-sdk/workflow-tengo:regexp")
 text := import("text")
-
-wellRe := regexp.compile(`^([A-Za-z]+)0*([0-9]+)$`)
 
 // A clone is one well of one plate: the same well number recurs on every plate,
 // so neither alone identifies it.
@@ -64,16 +61,6 @@ unmatched := func(traces) {
 	return out
 }
 
-// A1 and A01 are one well, so a sheet written either way reaches the same clone.
-normalizeWell := func(w) {
-	t := text.trim_space(w)
-	m := wellRe.find(t, 1)
-	if is_undefined(m) || len(m) == 0 {
-		return t
-	}
-	return text.to_upper(m[0][1].text) + m[0][2].text
-}
-
 sortStrings := func(items) {
 	out := copy(items)
 	for i := 1; i < len(out); i++ {
@@ -105,7 +92,8 @@ attach := func(clones, properties) {
 	clonesWithout := []
 	reached := {}
 	for c in clones {
-		key := cloneKey(c.plate, normalizeWell(c.well))
+		// The model hands every well over normalised, as the sheet's are.
+		key := cloneKey(c.plate, c.well)
 		got := false
 		for p in properties {
 			v := p.values[key]
@@ -233,6 +221,5 @@ export {
 	sequences: sequences,
 	readEnd: readEnd,
 	unmatched: unmatched,
-	normalizeWell: normalizeWell,
 	attach: attach
 }

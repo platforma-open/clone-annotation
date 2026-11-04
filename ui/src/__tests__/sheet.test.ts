@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import * as XLSX from "xlsx";
 import type { Sheet } from "../sheet";
-import { normalizeWell, readSheet } from "../sheet";
+import { readSheet } from "../sheet";
 import {
   buildProperties,
   cloneKey,
@@ -56,18 +56,6 @@ describe("readSheet", () => {
 
   test("an empty sheet gives no columns and no rows", () => {
     expect(readSheet(xlsx([]))).toEqual({ columns: [], rows: [] });
-  });
-});
-
-describe("normalizeWell", () => {
-  test("zero padding does not make a different well", () => {
-    expect(normalizeWell("A01")).toBe("A1");
-    expect(normalizeWell("A1")).toBe("A1");
-    expect(normalizeWell("h012")).toBe("H12");
-  });
-
-  test("anything that is not a well is left alone", () => {
-    expect(normalizeWell(" chamber-3 ")).toBe("chamber-3");
   });
 });
 

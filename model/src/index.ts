@@ -25,7 +25,7 @@ export type { AxisId, ImportFileHandle, PTableKey };
 export { getFilePathFromHandle };
 export * from "./path_pattern";
 export type { Property, PropertyType } from "@platforma-open/milaboratories.clone-annotation.kind";
-import { PathPattern } from "./path_pattern";
+import { normalizeWell, PathPattern } from "./path_pattern";
 
 /** One well of one plate, with how many files back each chain. */
 export type Clone = {
@@ -344,7 +344,7 @@ function tracesWithFields(data: BlockData, pattern: PathPattern | undefined) {
     const m = pattern?.match(path);
     const fields = m && {
       plate: m.plate?.value ?? "",
-      well: m.well.value,
+      well: normalizeWell(m.well.value),
       chain: m.chain?.value ?? "",
       direction: m.direction?.value ?? "",
     };

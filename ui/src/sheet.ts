@@ -44,9 +44,3 @@ export function readSheet(bytes: ArrayBuffer | Uint8Array, fileName?: string): S
   }
   return { columns, rows };
 }
-
-/** A well as the sheet writes it, normalised so A1 and A01 are one well. */
-export function normalizeWell(well: string): string {
-  const m = well.trim().match(/^([A-Za-z]+)0*(\d+)$/);
-  return m ? `${m[1]!.toUpperCase()}${m[2]}` : well.trim();
-}
