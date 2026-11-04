@@ -2,6 +2,7 @@
   "name": "@platforma-open/milaboratories.clone-annotation.workflow",
   "version": "1.0.0",
   "private": true,
+  "description": "Tengo-based template",
   "type": "module",
   "scripts": {
     "build": "shx rm -rf dist && pl-tengo build",

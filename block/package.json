@@ -43,12 +43,12 @@
     },
     "meta": {
       "title": "Clone Annotation",
-      "description": "Takes the sequencing files of individually picked clones, in whatever form they arrived, and returns annotated sequences with their plate and well identity and a quality assessment.",
+      "description": "Annotate Sanger traces of picked clones, with plate and well identity and quality control.",
       "longDescription": "file:../docs/description.md",
       "logo": "file:logos/block-logo.png",
       "organization": {
         "name": "MiLaboratories Inc",
-        "url": "https://milaboratories.com",
+        "url": "https://milaboratories.com/",
         "logo": "file:logos/organization-logo.png"
       },
       "changelog": "file:CHANGELOG.md",

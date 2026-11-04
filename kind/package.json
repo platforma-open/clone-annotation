@@ -2,6 +2,7 @@
   "name": "@platforma-open/milaboratories.clone-annotation.kind",
   "version": "1.0.0",
   "private": true,
+  "description": "Block kind for the clone-annotation block",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

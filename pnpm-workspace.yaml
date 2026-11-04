@@ -9,17 +9,17 @@ packages:
 catalog:
   ag-grid-enterprise: ~34.1.2
   ag-grid-vue3: ~34.1.2
-  "@platforma-sdk/model": 1.85.2
-  "@platforma-sdk/ui-vue": 1.85.2
-  "@platforma-sdk/workflow-tengo": 6.17.0
-  "@platforma-sdk/test": 1.85.4
+  "@platforma-sdk/model": 1.87.0
+  "@platforma-sdk/ui-vue": 1.87.0
+  "@platforma-sdk/workflow-tengo": 6.20.0
+  "@platforma-sdk/test": 1.87.1
   "@platforma-sdk/block-kind": 1.1.0
-  "@platforma-sdk/block-tools": 2.16.16
-  "@platforma-sdk/tengo-builder": 4.1.12
-  "@platforma-sdk/package-builder": 3.16.1
-  "@milaboratories/ts-builder": 1.7.2
+  "@platforma-sdk/block-tools": 2.17.4
+  "@platforma-sdk/tengo-builder": 4.1.17
+  "@platforma-sdk/package-builder": 3.16.2
+  "@milaboratories/ts-builder": 1.7.3
   "@milaboratories/ts-configs": 1.4.0
-  turbo: ~2.8.11
+  turbo: ~2.11.10
   shx: ~0.4.0
   "@changesets/cli": ~2.29.8
   vitest: ~4.0.18
@@ -28,6 +28,60 @@ catalog:
   "@platforma-open/milaboratories.software-tracy": 0.1.0
   "@platforma-open/milaboratories.software-anarci": 1.0.1
   "@platforma-open/milaboratories.software-mixcr": 4.7.0-406-develop
-  vue: 3.5.24
-  "@milaboratories/helpers": 1.14.5
+  vue: 3.5.44
+  "@milaboratories/helpers": 1.14.6
   "@milaboratories/graph-maker": 1.9.0
+overrides:
+  "@platforma-sdk/model": 1.87.0
+  "@platforma-sdk/ui-vue": 1.87.0
+minimumReleaseAgeExclude:
+  - "@milaboratories/*"
+  - "@platforma-sdk/*"
+  - "@platforma-open/*"
+  - "@babel/core@7.29.13"
+  - "@babel/generator@7.29.13"
+  - "@babel/helper-compilation-targets@7.29.13"
+  - "@babel/helper-module-transforms@7.29.13"
+  - "@babel/helper-string-parser@7.29.13"
+  - "@babel/helpers@7.29.13"
+  - "@babel/parser@7.29.13"
+  - "@babel/runtime@7.29.13"
+  - "@babel/traverse@7.29.13"
+  - "@rollup/rollup-android-arm-eabi@4.67.5"
+  - "@rollup/rollup-android-arm64@4.67.5"
+  - "@rollup/rollup-android-x64@4.67.5"
+  - "@rollup/rollup-darwin-arm64@4.67.5"
+  - "@rollup/rollup-darwin-x64@4.67.5"
+  - "@rollup/rollup-freebsd-arm64@4.67.5"
+  - "@rollup/rollup-freebsd-x64@4.67.5"
+  - "@rollup/rollup-linux-arm-gnueabihf@4.67.5"
+  - "@rollup/rollup-linux-arm-musleabihf@4.67.5"
+  - "@rollup/rollup-linux-arm64-gnu@4.67.5"
+  - "@rollup/rollup-linux-arm64-musl@4.67.5"
+  - "@rollup/rollup-linux-loong64-gnu@4.67.5"
+  - "@rollup/rollup-linux-loong64-musl@4.67.5"
+  - "@rollup/rollup-linux-ppc64-gnu@4.67.5"
+  - "@rollup/rollup-linux-ppc64-musl@4.67.5"
+  - "@rollup/rollup-linux-riscv64-gnu@4.67.5"
+  - "@rollup/rollup-linux-riscv64-musl@4.67.5"
+  - "@rollup/rollup-linux-s390x-gnu@4.67.5"
+  - "@rollup/rollup-linux-x64-gnu@4.67.5"
+  - "@rollup/rollup-linux-x64-musl@4.67.5"
+  - "@rollup/rollup-openbsd-x64@4.67.5"
+  - "@rollup/rollup-openharmony-arm64@4.67.5"
+  - "@rollup/rollup-win32-arm64-msvc@4.67.5"
+  - "@rollup/rollup-win32-ia32-msvc@4.67.5"
+  - "@rollup/rollup-win32-x64-gnu@4.67.5"
+  - "@rollup/rollup-win32-x64-msvc@4.67.5"
+  - "@typescript/vfs@1.6.6"
+  - bare-url@2.5.6
+  - electron-to-chromium@1.5.476
+  - rollup@4.67.5
+allowBuilds:
+  "@milaboratories/tengo-tester": false
+  "@platforma-open/milaboratories.software-mixcr": false
+  cpu-features: false
+  esbuild: false
+  protobufjs: false
+  ssh2: false
+  "@milaboratories/pframes-rs-node": true
