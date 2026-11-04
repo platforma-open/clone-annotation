@@ -3,6 +3,7 @@ import type {
   ImportFileHandle,
   PropertyType,
 } from "@platforma-open/milaboratories.clone-annotation.model";
+import { getFilePathFromHandle } from "@platforma-open/milaboratories.clone-annotation.model";
 import type { ListOption } from "@platforma-sdk/ui-vue";
 import {
   PlAlert,
@@ -47,12 +48,21 @@ const draft = reactive({
   plateColumn: app.model.data.propertyMapping?.plateColumn ?? "",
   wellColumn: app.model.data.propertyMapping?.wellColumn ?? "",
   actions: {} as Record<string, Action>,
+  /** The saved choices apply until another file is picked. */
+  fromSaved: app.model.data.propertyFile !== undefined,
 });
+
+// The file goes into the block data on pick, because that is what lets the
+// sheet be read. Leaving without Import puts the previous file back.
+const previousFile = app.model.data.propertyFile;
+let imported = false;
 
 watch(
   () => draft.filePickerOpen || draft.formOpen,
   (anyOpen) => {
-    if (!anyOpen) app.showPropertiesDialog = false;
+    if (anyOpen) return;
+    if (!imported) app.model.data.propertyFile = previousFile;
+    app.showPropertiesDialog = false;
   },
 );
 
@@ -61,24 +71,39 @@ const bytes = computed(() => {
   return handle ? reactiveFileContent.getContentBytes(handle.handle)?.value : undefined;
 });
 
-const sheet = computed(() => (bytes.value ? readSheet(bytes.value) : undefined));
+const fileName = computed(() => {
+  const handle = app.model.data.propertyFile;
+  return handle ? getFilePathFromHandle(handle) : undefined;
+});
+
+const sheet = computed(() => (bytes.value ? readSheet(bytes.value, fileName.value) : undefined));
 
 /**
- * The identifier columns and every column's type are guessed once, when the
- * sheet arrives. They are a starting point the scientist corrects, never a
- * decision: a guess that cannot be overridden is the thing R23 forbids.
+ * Each column starts from what was saved for it, and is guessed only where
+ * nothing was: a new sheet, or a column the saved sheet did not have. A guess
+ * is a starting point the scientist corrects, never a decision: a guess that
+ * cannot be overridden is the thing R23 forbids.
  */
-watch(sheet, (s) => {
-  if (!s) return;
-  if (draft.wellColumn === "") draft.wellColumn = guessWellColumn(s) ?? "";
-  if (draft.plateColumn === "") draft.plateColumn = guessPlateColumn(s, draft.wellColumn) ?? "";
-  const chosen = app.model.data.propertyMapping?.propertyColumns;
-  for (const c of s.columns) {
-    if (draft.actions[c] !== undefined) continue;
-    const declined = chosen !== undefined && !chosen.includes(c);
-    draft.actions[c] = declined ? IGNORE : guessColumnType(s, c);
-  }
-});
+watch(
+  sheet,
+  (s) => {
+    if (!s) return;
+    if (draft.wellColumn === "") draft.wellColumn = guessWellColumn(s) ?? "";
+    if (draft.plateColumn === "") draft.plateColumn = guessPlateColumn(s, draft.wellColumn) ?? "";
+    const savedTypes = new Map(
+      draft.fromSaved ? app.model.data.properties.map((p) => [p.name, p.type]) : [],
+    );
+    const chosen = draft.fromSaved ? app.model.data.propertyMapping?.propertyColumns : undefined;
+    for (const c of s.columns) {
+      if (draft.actions[c] !== undefined) continue;
+      const saved = savedTypes.get(c);
+      if (saved !== undefined) draft.actions[c] = saved;
+      else if (chosen !== undefined && !chosen.includes(c)) draft.actions[c] = IGNORE;
+      else draft.actions[c] = guessColumnType(s, c);
+    }
+  },
+  { immediate: true },
+);
 
 function guessColumnType(s: Sheet, column: string): PropertyType {
   return guessType(s.rows.map((r) => r[column] ?? "").filter((v) => v !== ""));
@@ -128,6 +153,13 @@ const summary = computed(() => {
 function pickFile(handles: ImportFileHandle[]) {
   const file = handles[0];
   if (!file) return;
+  if (file !== app.model.data.propertyFile) {
+    // Another sheet: nothing chosen for the last one carries over.
+    draft.fromSaved = false;
+    draft.plateColumn = "";
+    draft.wellColumn = "";
+    draft.actions = {};
+  }
   app.model.data.propertyFile = file;
   draft.formOpen = true;
 }
@@ -147,6 +179,7 @@ function save() {
   // The file is parsed once, here. What reaches the workflow is the mapped
   // result, as samples-and-data does with its metadata columns.
   app.model.data.properties = buildProperties(s, mapping);
+  imported = true;
   draft.formOpen = false;
 }
 </script>
@@ -194,6 +227,7 @@ function save() {
 
     <template #actions>
       <PlBtnPrimary :disabled="!canSave" @click="save">Import</PlBtnPrimary>
+      <PlBtnGhost @click.stop="() => (draft.filePickerOpen = true)">Choose another file</PlBtnGhost>
       <PlBtnGhost @click.stop="() => (draft.formOpen = false)">Cancel</PlBtnGhost>
     </template>
   </PlDialogModal>

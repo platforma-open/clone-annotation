@@ -25,7 +25,7 @@ export type { AxisId, ImportFileHandle, PTableKey };
 export { getFilePathFromHandle };
 export * from "./path_pattern";
 export type { Property, PropertyType } from "@platforma-open/milaboratories.clone-annotation.kind";
-import { normalizeWell, PathPattern } from "./path_pattern";
+import { normalizeWell, PathPattern, readEnd } from "./path_pattern";
 
 /** One well of one plate, with how many files back each chain. */
 export type Clone = {
@@ -346,7 +346,8 @@ function tracesWithFields(data: BlockData, pattern: PathPattern | undefined) {
       plate: m.plate?.value ?? "",
       well: normalizeWell(m.well.value),
       chain: m.chain?.value ?? "",
-      direction: m.direction?.value ?? "",
+      // forward or reverse; a value neither end claims goes on as written.
+      direction: m.direction ? (readEnd(m.direction.value) ?? m.direction.value) : "",
     };
     return { handle, path, fields };
   });

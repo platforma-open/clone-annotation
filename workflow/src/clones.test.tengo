@@ -6,6 +6,9 @@ clones := import(":clones")
 // {{Plate}}_{{Well}}, {{Plate}}_{{Chain}}_{{Well}} or
 // {{Plate}}_{{Chain}}_{{Direction}}_{{Well}} by how many there are. Any other
 // name did not match, so it carries no fields.
+// The model sends the direction as forward or reverse, whatever the name said.
+END_OF := { F: "forward", R: "reverse" }
+
 trace := func(path) {
 	t := { handle: path, path: path }
 	parts := text.split(text.trim_suffix(path, ".ab1"), "_")
@@ -14,7 +17,9 @@ trace := func(path) {
 	} else if len(parts) == 3 {
 		t.fields = { plate: parts[0], chain: parts[1], well: parts[2], direction: "" }
 	} else if len(parts) == 4 {
-		t.fields = { plate: parts[0], chain: parts[1], direction: parts[2], well: parts[3] }
+		end := END_OF[parts[2]]
+		t.fields = { plate: parts[0], chain: parts[1], well: parts[3],
+			direction: is_undefined(end) ? parts[2] : end }
 	}
 	return t
 }
@@ -184,13 +189,9 @@ TestWithoutADirectionGroupTheFirstReadStandsAlone := func() {
 	test.isTrue(is_undefined(out[0].reverse))
 }
 
-TestReadEndAcceptsTheUsualSpellings := func() {
-	test.isEqual("forward", clones.readEnd("F"))
-	test.isEqual("forward", clones.readEnd("fwd"))
-	test.isEqual("reverse", clones.readEnd(" Rev "))
-	test.isEqual("reverse", clones.readEnd("2"))
-	test.isEqual("forward", clones.readEnd("R1"))
-	test.isEqual("reverse", clones.readEnd("r2"))
+TestReadEndTakesOnlyTheTwoEnds := func() {
+	test.isEqual("forward", clones.readEnd("forward"))
+	test.isEqual("reverse", clones.readEnd("reverse"))
 	test.isEqual("", clones.readEnd("inner"))
 }
 

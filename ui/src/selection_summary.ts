@@ -2,6 +2,7 @@ import type {
   PathPattern,
   PathPatternMatch,
 } from "@platforma-open/milaboratories.clone-annotation.model";
+import { normalizeWell, readEnd } from "@platforma-open/milaboratories.clone-annotation.model";
 import type { SelectedFile } from "./trace_set";
 
 export type ValueCount = { value: string; count: number };
@@ -55,8 +56,11 @@ export type SelectionGroups = {
   matched: SelectedFile[];
 };
 
+// The same well and direction rules the workflow gets, so A1 + F and A01 + fwd
+// show as the one read they become.
 function identity(m: PathPatternMatch): string {
-  return [m.plate?.value ?? "", m.well.value, m.chain?.value ?? "", m.direction?.value ?? ""].join(
+  const direction = m.direction ? (readEnd(m.direction.value) ?? m.direction.value) : "";
+  return [m.plate?.value ?? "", normalizeWell(m.well.value), m.chain?.value ?? "", direction].join(
     "\u0000",
   );
 }

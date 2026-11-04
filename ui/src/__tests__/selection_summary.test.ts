@@ -91,6 +91,14 @@ describe("summarizeFields", () => {
 });
 
 describe("groupSelection", () => {
+  test("a well and a direction spelled two ways are still one read", () => {
+    const pattern = PathPattern.parse("{{Plate}}_{{Well}}_{{Chain}}_{{Direction}}.ab1");
+    const g = groupSelection(select(pattern, ["P1_A1_IGH_F.ab1", "P1_A01_IGH_fwd.ab1"]));
+    expect(g.collisions.map((c) => c.map((f) => f.path))).toEqual([
+      ["P1_A1_IGH_F.ab1", "P1_A01_IGH_fwd.ab1"],
+    ]);
+  });
+
   test("files with the same identity are grouped as a collision", () => {
     const pattern = PathPattern.parse("{{Well}}[_{{:Rerun}}].ab1");
     const g = groupSelection(select(pattern, ["A1.ab1", "A1_rep1.ab1", "A2.ab1"]));

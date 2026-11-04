@@ -129,6 +129,20 @@ export function normalizeWell(well: string): string {
   return m ? `${m[1]!.toUpperCase()}${m[2]}` : well.trim();
 }
 
+const FORWARD = new Set(["f", "fwd", "forward", "1", "r1"]);
+const REVERSE = new Set(["r", "rev", "reverse", "2", "r2"]);
+
+/**
+ * Which end of the template a direction names, or undefined for a value
+ * neither end claims. F, fwd and 1 are one end however the files spell it.
+ */
+export function readEnd(direction: string): "forward" | "reverse" | undefined {
+  const d = direction.trim().toLowerCase();
+  if (FORWARD.has(d)) return "forward";
+  if (REVERSE.has(d)) return "reverse";
+  return undefined;
+}
+
 /** Whether the field's own token, with no list, would read this value. */
 export function fieldAccepts(field: Field, value: string): boolean {
   return new RegExp(`^(?:${DEFAULT_VALUES[field]})$`).test(value);

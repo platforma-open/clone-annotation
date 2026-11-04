@@ -136,18 +136,12 @@ attach := func(clones, properties) {
 }
 
 
-// Which end of the sequence a captured direction names. Anything else is a read
-// whose direction the set does not state, and such a read stands alone.
-forwardValues := { "f": true, "fwd": true, "forward": true, "1": true, "r1": true }
-reverseValues := { "r": true, "rev": true, "reverse": true, "2": true, "r2": true }
-
+// Which end of the sequence a read is. The model has already turned every
+// spelling into forward or reverse; anything else is a read whose direction
+// the set does not state, and such a read stands alone.
 readEnd := func(direction) {
-	d := text.to_lower(text.trim_space(direction))
-	if forwardValues[d] == true {
-		return "forward"
-	}
-	if reverseValues[d] == true {
-		return "reverse"
+	if direction == "forward" || direction == "reverse" {
+		return direction
 	}
 	return ""
 }

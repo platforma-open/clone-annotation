@@ -8,8 +8,14 @@ import type { SelectedFile } from "./trace_set";
 const props = defineProps<{ items: SelectedFile[] }>();
 const emit = defineEmits<{ remove: [handles: ImportFileHandle[]] }>();
 
+// Quotes too: a file name also lands inside a quoted attribute.
 function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 const styles = useCssModule();

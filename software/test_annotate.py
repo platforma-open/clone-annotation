@@ -297,6 +297,16 @@ def test_the_plate_map_fills_every_well_and_splits_the_chains():
     check("an empty well", (by[("H", "12")]["verdict"], by[("H", "12")]["heavy_length"]), ("No file", ""))
 
 
+def test_a_wrong_label_is_caught_on_a_heavy_only_plate():
+    from annotate import pair_up
+    rows = [sequence("m0", "P1", "A1", "IGH", "k1", "H"),
+            sequence("m1", "P1", "B1", "IGH", "k2", "KL")]
+    unpaired, mismatched = pair_up(rows, True)
+    check("nothing to pair", rows[0]["pairStatus"], "Single domain")
+    check("the light chain is flagged", rows[1].get("chainMismatch"), True)
+    check("and listed", len(mismatched), 1)
+
+
 def test_two_chains_of_one_well_pair():
     from annotate import pair_up
     rows = [sequence("m0", "Plate1", "A1", "IGH", "k1", "H"),
@@ -558,7 +568,7 @@ def test_wells_that_disagree_on_a_reading_are_marked():
             "values": {"Plate1\u0000A1": "2.5", "Plate1\u0000B2": "0.1"}}
     table = clones_of(rows, [prop])
     row = table[0]
-    check("both values kept", row["prop_0_values"], "2.5, 0.1")
+    check("both values kept", row["prop_0_values"], "Plate1 A1: 2.5, Plate1 B2: 0.1")
     check("disagreement marked", row["prop_0_disagrees"], "yes")
     check("max", row["prop_0_max"], "2.5")
     check("min", row["prop_0_min"], "0.1")
@@ -581,7 +591,7 @@ def test_a_label_gets_no_arithmetic():
     prop = {"name": "note", "type": "String",
             "values": {"Plate1\u0000A1": "hit", "Plate1\u0000B2": "weak"}}
     row = clones_of(rows, [prop])[0]
-    check("values kept as they stand", row["prop_0_values"], "hit, weak")
+    check("values kept as they stand", row["prop_0_values"], "Plate1 A1: hit, Plate1 B2: weak")
     check("disagreement marked", row["prop_0_disagrees"], "yes")
     check("no summary invented", row["prop_0_max"], "")
 
@@ -793,6 +803,26 @@ def test_the_plate_row_counts_chains_reads_merges_and_repeats():
     check("3 of 4 sequences merged", row["mergedShare"], 0.75)
     check("A1 and B1 hold the same antibody", row["redundantShare"], 1.0)
     check("the total has them too", total["redundantShare"], 1.0)
+
+
+def test_a_well_with_two_identical_candidates_counts_once():
+    import csv as _csv
+    from annotate import write_abundance, write_clones
+    rows = [sequence_nt("m0", "A1", "IGH", "H", "ACGT"),
+            sequence_nt("m1", "A1", "IGK", "KL", "GGGG"),
+            sequence_nt("m2", "A1", "IGK", "KL", "GGGG"),
+            sequence_nt("m3", "B1", "IGH", "H", "ACGT"),
+            sequence_nt("m4", "B1", "IGK", "KL", "GGGG")]
+    prop = {"name": "Titer", "type": "Double",
+            "values": {"Plate1\u0000A1": "120", "Plate1\u0000C1": "7"}}
+    work = tempfile.mkdtemp()
+    write_clones(os.path.join(work, "clones.tsv"), rows, [{"id": r["id"]} for r in rows], [prop])
+    clone = list(_csv.DictReader(open(os.path.join(work, "clones.tsv")), delimiter="\t"))[0]
+    check("each well once", (clone["wells"], clone["wellCount"]), ("Plate1 A1, Plate1 B1", "2"))
+    check("B1 was not measured and shows so", clone["prop_0_values"], "Plate1 A1: 120")
+    write_abundance(os.path.join(work, "abundance.tsv"), rows)
+    ab = list(_csv.DictReader(open(os.path.join(work, "abundance.tsv")), delimiter="\t"))
+    check("abundance counts wells", ab[0]["wellCount"], "2")
 
 
 def test_the_export_keeps_only_the_accepted_wells():

@@ -54,6 +54,20 @@ describe("readSheet", () => {
     expect(s.rows).toHaveLength(1);
   });
 
+  test("delimited text keeps every value as written", () => {
+    const bytes = (text: string) => new TextEncoder().encode(text);
+    for (const [name, text] of [
+      ["plates.csv", "plate,well,elisa\n001,A1,2.50\n"],
+      ["plates.tsv", "plate\twell\telisa\n001\tA1\t2.50\n"],
+    ] as const) {
+      expect(readSheet(bytes(text), name).rows[0]).toEqual({
+        plate: "001",
+        well: "A1",
+        elisa: "2.50",
+      });
+    }
+  });
+
   test("an empty sheet gives no columns and no rows", () => {
     expect(readSheet(xlsx([]))).toEqual({ columns: [], rows: [] });
   });

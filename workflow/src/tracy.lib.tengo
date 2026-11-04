@@ -155,7 +155,7 @@ def basecall_all(traces, calls, manifest, floor):
             set_aside.append({
                 "path": path,
                 "plate": manifest[trace_id]["plate"],
-                "reason": "Trimming at Q%d leaves %d bases, %d needed" % (floor, end - start, MIN_USABLE),
+                "reason": "Trimming at Q%g leaves %d bases, %d needed" % (floor, end - start, MIN_USABLE),
             })
             continue
         (calls / (trace_id + ".fastq")).write_text(
@@ -336,7 +336,7 @@ def main(argv):
     traces = pathlib.Path(argv[1])
     calls = pathlib.Path(argv[2])
     manifest = json.loads(pathlib.Path(argv[3]).read_text())
-    floor = int(argv[4])
+    floor = float(argv[4])
     plan = json.loads(pathlib.Path(argv[5]).read_text())
     calls.mkdir(parents=True, exist_ok=True)
 

@@ -54,6 +54,11 @@ def test_a_higher_floor_trims_harder():
     check("Q30 drops it", driver.trim(quality, 30), (0, 20))
 
 
+def test_a_fractional_floor_is_accepted():
+    quality = [40] * 20 + [22] * 20 + [40] * 20
+    check("Q19.5 keeps the Q22 stretch", driver.trim(quality, 19.5), (0, 60))
+
+
 def abif(entries):
     """A minimal ABIF file: header, then data, then the directory."""
     data, directory = b"", b""

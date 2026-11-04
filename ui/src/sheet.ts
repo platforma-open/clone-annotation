@@ -15,7 +15,11 @@ export type Sheet = {
 export function readSheet(bytes: ArrayBuffer | Uint8Array, fileName?: string): Sheet {
   const wb = XLSX.read(
     bytes,
-    fileName?.endsWith(".csv") ? { type: "array", raw: true } : { type: "array" },
+    // Delimited text keeps every value as written: a plate called 001 must not
+    // become 1 before the scientist has chosen the column's type.
+    fileName && /\.(csv|tsv|txt)$/i.test(fileName)
+      ? { type: "array", raw: true }
+      : { type: "array" },
   );
   const first = wb.SheetNames[0];
   if (!first) return { columns: [], rows: [] };

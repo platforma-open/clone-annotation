@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { highlightMatch, normalizeWell, PathPattern } from "../path_pattern";
+import { highlightMatch, normalizeWell, PathPattern, readEnd } from "../path_pattern";
 
 describe("PathPattern", () => {
   test("binds the plate to a directory segment", () => {
@@ -324,5 +324,16 @@ describe("normalizeWell", () => {
 
   test("anything that is not a well is left alone", () => {
     expect(normalizeWell(" chamber-3 ")).toBe("chamber-3");
+  });
+});
+
+describe("readEnd", () => {
+  test("the usual spellings name the two ends", () => {
+    expect(["F", "fwd", " Forward ", "1", "R1"].map(readEnd)).toEqual(Array(5).fill("forward"));
+    expect(["R", " Rev ", "reverse", "2", "r2"].map(readEnd)).toEqual(Array(5).fill("reverse"));
+  });
+
+  test("anything else names neither", () => {
+    expect(readEnd("inner")).toBeUndefined();
   });
 });

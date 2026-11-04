@@ -149,16 +149,19 @@ def pair_up(annotations, declared):
     material is already one sequence and nothing is held up waiting for a
     partner it was never going to have (R20).
     """
+    # Labels are checked whether or not there are pairs to make: a heavy-only
+    # plate that holds a light chain is wrong all the same.
+    mismatched = check_labels(annotations)
     if not pairing_applies(annotations, declared):
         for entry in annotations:
             entry["pairStatus"] = SINGLE_DOMAIN
-        return [], []
+        return [], mismatched
 
     groups = {}
     for entry in annotations:
         groups.setdefault(entry.get("pairKey", ""), []).append(entry)
 
-    unpaired, mismatched = [], []
+    unpaired = []
     for members in groups.values():
         # Only a read the sequence itself identifies can be a chain of this
         # clone. A protocol fires every primer at every well, so a file that
@@ -184,17 +187,22 @@ def pair_up(annotations, declared):
                 member["pairStatus"] = AMBIGUOUS
                 unpaired.append(where(member))
 
+    return sorted(unpaired), mismatched
+
+
+def check_labels(annotations):
+    """Mark every sequence whose file name says one chain and whose bases read
+    as another, and list them. Only a clear contradiction counts: an unread
+    label on either side is not evidence of anything."""
+    mismatched = []
     for entry in annotations:
         declared_as = DECLARED_CLASS.get(entry["declaredChain"].strip().lower(), "")
         observed = entry.get("observedChain", "")
-        # Only a clear contradiction counts. An unread label on either side is
-        # not evidence of anything.
         if declared_as and observed and declared_as != observed:
             entry["chainMismatch"] = True
             mismatched.append("%s (name says %s, sequence says %s)"
                               % (where(entry), entry["declaredChain"], observed))
-
-    return sorted(unpaired), sorted(mismatched)
+    return sorted(mismatched)
 
 
 def where(entry):
@@ -617,6 +625,26 @@ def exported_pairings(annotations, accepted=None):
             if accepted is None or (p["plate"], p["well"]) in accepted]
 
 
+def clones_by_key(annotations, accepted=None):
+    """The accepted pairings grouped by clone, one per well.
+
+    A well with two identical candidates for a chain gives two pairings of the
+    same clone. It is still one well, so it is counted, listed and measured once.
+    """
+    groups = {}
+    for pairing in exported_pairings(annotations, accepted):
+        key = variant_key_of(pairing)
+        if key is None:
+            continue
+        wells = groups.setdefault(key, {})
+        wells.setdefault((pairing["plate"], pairing["well"]), pairing)
+    return {key: list(wells.values()) for key, wells in groups.items()}
+
+
+def well_name(pairing):
+    return " ".join(x for x in (pairing["plate"], pairing["well"]) if x)
+
+
 def accepted_wells(verdicts, export):
     """The wells whose clones leave the block, by the export setting."""
     allowed = EXPORT_VERDICTS[export]
@@ -631,12 +659,7 @@ def write_abundance(path, annotations, accepted=None):
     The sample is the plate, so a variant seen on two plates carries a count
     for each rather than one total.
     """
-    groups = {}
-    for pairing in exported_pairings(annotations, accepted):
-        key = variant_key_of(pairing)
-        if key is None:
-            continue
-        groups.setdefault(key, []).append(pairing)
+    groups = clones_by_key(annotations, accepted)
 
     with open(path, "w", newline="") as handle:
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
@@ -710,12 +733,7 @@ def write_clones(path, annotations, sequences, properties, counts=None, accepted
     """
     by_id = {m["id"]: m for m in sequences}
     by_well = {(w["plate"], w["well"]): w for w in verdicts}
-    groups = {}
-    for pairing in exported_pairings(annotations, accepted):
-        key = variant_key_of(pairing)
-        if key is None:
-            continue
-        groups.setdefault(key, []).append(pairing)
+    groups = clones_by_key(annotations, accepted)
 
     header = ["variantKey"] + clone_columns(properties)
     with open(path, "w", newline="") as handle:
@@ -729,23 +747,26 @@ def write_clones(path, annotations, sequences, properties, counts=None, accepted
         for members in sorted(groups.values(), key=lambda g: -len(g)):
             first = members[0]
             key = keys[id(members)]
-            wells = [" ".join(x for x in (m["plate"], m["well"]) if x) for m in members]
-            row = [key, labels[key], ", ".join(wells), len(members), first["status"]]
+            row = [key, labels[key], ", ".join(well_name(m) for m in members), len(members),
+                   first["status"]]
             row += best_verdict(members, by_well)
             row += side_cells(first["heavy"], by_id) + side_cells(first["light"], by_id)
 
             for i, prop in enumerate(properties):
+                # Each value keeps its well, so a well nobody measured shows by
+                # its absence rather than shifting the others.
                 seen = []
                 for m in members:
                     v = prop["values"].get(m["plate"] + "\u0000" + m["well"])
                     if v is not None and v != "":
-                        seen.append(v)
+                        seen.append((well_name(m), v))
+                values = [v for _, v in seen]
                 # R15: six wells reading differently is a result in itself, and
                 # one summarised number hides it. A clone whose wells agree
                 # carries no mark.
-                disagrees = "yes" if len(set(seen)) > 1 else ""
-                summary = summarise(seen)
-                row += [", ".join(seen), disagrees]
+                disagrees = "yes" if len(set(values)) > 1 else ""
+                summary = summarise(values)
+                row += [", ".join("%s: %s" % pair for pair in seen), disagrees]
                 row += [summary[s] if summary else "" for s in ("min", "median", "max", "mean")]
             writer.writerow(row)
 

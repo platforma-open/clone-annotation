@@ -54,7 +54,7 @@ CLONE := {
 
 // A sheet property on a clone, keyed by the column's suffix.
 PROPERTY := {
-	values: "Each well's value from the sheet, in well order.",
+	values: "Each well's value from the sheet, written with its well. A well with no value is left out.",
 	disagrees: "\"yes\" when the wells give different values.",
 	min: "The lowest of the wells' values.",
 	median: "The median of the wells' values.",
