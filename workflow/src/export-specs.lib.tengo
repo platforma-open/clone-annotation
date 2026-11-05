@@ -43,15 +43,18 @@ keyAxis := func(blockId) {
 			type: "String",
 			name: "pl7.app/variantKey",
 			domain: {
+				"pl7.app/blockId": blockId,
+				"pl7.app/modality": "vdj",
 				"pl7.app/vdj/receptor": RECEPTOR,
+				// Kept until consumers read pl7.app/modality: clonotype-space, cdr3-spectratype
+				// and vj-gene-usage tell an antibody variantKey axis apart by this key.
 				"pl7.app/vdj/clonotypingRunId": blockId
 			},
 			annotations: {
 				"pl7.app/label": "Variant Id",
 				"pl7.app/table/fontFamily": "monospace",
 				"pl7.app/table/visibility": "default",
-				"pl7.app/table/orderPriority": "110000",
-				"pl7.app/segmentedBy": "[\"pl7.app/vdj/clonotypingRunId\"]"
+				"pl7.app/table/orderPriority": "110000"
 			}
 		}
 	}

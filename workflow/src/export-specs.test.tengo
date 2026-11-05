@@ -31,6 +31,13 @@ TestTheRecordKeyIsTheOnlyAxis := func() {
 	test.isEqual("pl7.app/variantKey", s.axes[0].spec.name)
 }
 
+TestTheKeyAxisNamesItsRunAndModality := func() {
+	domain := exportSpecs.variantSettings("blk", undefined, "imgt").axes[0].spec.domain
+	test.isEqual("blk", domain["pl7.app/blockId"])
+	test.isEqual("vdj", domain["pl7.app/modality"])
+	test.isEqual("blk", domain["pl7.app/vdj/clonotypingRunId"])
+}
+
 TestTheChainsAreSeparatedByDomainNotByAxis := func() {
 	s := exportSpecs.variantSettings("blk", undefined, "imgt")
 	sides := {}
