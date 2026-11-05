@@ -692,6 +692,31 @@ def write_abundance(path, annotations, accepted=None):
                 writer.writerow([plate or "set", clone_key(members[0]), per_plate[plate]])
 
 
+def write_trace_reads(path, annotations, sequences, reads, accepted=None):
+    """The one read the sequence viewer shows per variant and chain.
+
+    A variant is the clone's first well, the same well its sequences are taken
+    from in the clones table. Of the reads behind that well's sequence, the one
+    with the longest usable stretch is the one worth looking at. `chain` is the
+    paired-chain letter the exported columns carry: A heavy, B light.
+    """
+    by_id = {m["id"]: m for m in sequences}
+    usable = {r["path"]: r.get("usableLength") or 0 for r in reads}
+    groups = clones_by_key(annotations, accepted)
+
+    with open(path, "w", newline="") as handle:
+        writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
+        writer.writerow(["variantKey", "chain", "path"])
+        for members in groups.values():
+            first = members[0]
+            key = clone_key(first)
+            for side, chain in (("heavy", "A"), ("light", "B")):
+                entry = first.get(side)
+                paths = by_id.get(entry["id"], {}).get("reads", []) if entry else []
+                if paths:
+                    writer.writerow([key, chain, max(paths, key=lambda p: usable.get(p, 0))])
+
+
 def clone_key(pairing):
     """The key mixcr-clonotyping gives a clonotype, built the same way.
 
@@ -1058,6 +1083,8 @@ def main(argv=None):
                    help="One row per distinct clone, with the wells behind it")
     p.add_argument("--out_abundance_tsv", required=False,
                    help="Wells per plate, per variant")
+    p.add_argument("--out_trace_reads_tsv", required=False,
+                   help="The read the sequence viewer shows, per variant and chain")
     p.add_argument("--out_wells_tsv", required=False,
                    help="One row per well of every plate, for the plate map")
     p.add_argument("--out_plates_tsv", required=False,
@@ -1167,6 +1194,9 @@ def main(argv=None):
                        accepted, verdicts)
     if args.out_abundance_tsv:
         write_abundance(args.out_abundance_tsv, annotations, accepted)
+    if args.out_trace_reads_tsv:
+        write_trace_reads(args.out_trace_reads_tsv, annotations, sequences,
+                          trace_report.get("reads", []), accepted)
     # A file Tracy could not read is set aside without ever becoming a read.
     called = {r["path"] for r in trace_report.get("reads", [])}
     files = trace_report.get("reads", []) + [
