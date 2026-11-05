@@ -34,6 +34,9 @@ catalog:
 overrides:
   "@platforma-sdk/model": 1.87.0
   "@platforma-sdk/ui-vue": 1.87.0
+  # Unreleased viewer, linked locally until it is published.
+  "@milaboratories/sequence-viewer": file:../../core/visualizations/packages/sequence-viewer/package.tgz
+  "@milaboratories/pf-plots": file:../../core/visualizations/packages/pf-plots/package.tgz
 minimumReleaseAgeExclude:
   - "@milaboratories/*"
   - "@platforma-sdk/*"

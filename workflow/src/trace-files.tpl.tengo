@@ -1,0 +1,52 @@
+// The `.ab1` file the sequence viewer shows per variant and chain, re-keyed from the
+// staged trace ids onto [variantKey], one resource map per chain.
+//
+// A separate template because the key is known only once the annotator has run: a
+// variant's key is a digest of its sequences. Which read stands for it arrives as file
+// content, which a template can read only after waiting for it. The files themselves are
+// the uploaded blobs, not copies.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
+json := import("json")
+text := import("text")
+
+self.defineOutputs("heavy", "light")
+
+self.awaitState("traces", "ResourceReady")
+self.awaitState("traceReads", "ResourceReady")
+
+self.body(func(inputs) {
+	// The staged id of each trace, by the path the annotator names it under.
+	idOf := inputs.params.idOf
+	sideOf := { A: "heavy", B: "light" }
+
+	blobs := {}
+	for key, blob in inputs.traces.inputs() {
+		blobs[string(json.decode(key)[0])] = blob
+	}
+
+	maps := {
+		heavy: pcolumn.resourceMapBuilder(1),
+		light: pcolumn.resourceMapBuilder(1)
+	}
+	// `variantKey\tchain\tpath`, header first.
+	lines := text.split(text.trim_space(string(inputs.traceReads.getData())), "\n")
+	for i := 1; i < len(lines); i++ {
+		fields := text.split(lines[i], "\t")
+		if len(fields) < 3 || fields[0] == "" {
+			continue
+		}
+		side := sideOf[fields[1]]
+		blob := blobs[idOf[text.trim_space(fields[2])]]
+		if is_undefined(side) || is_undefined(blob) {
+			continue
+		}
+		maps[side].add([fields[0]], blob)
+	}
+
+	return {
+		heavy: maps.heavy.build(),
+		light: maps.light.build()
+	}
+})

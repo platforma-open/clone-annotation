@@ -301,7 +301,25 @@ abundanceSettings := func(blockId) {
 	}
 }
 
+// The `.ab1` read the sequence viewer shows for one chain of a variant. Hidden: it is a
+// file, not something a table or a chart can show.
+traceFileColumn := func(blockId, side) {
+	chain := side == "heavy" ? "IGHeavy" : "IGLight"
+	return {
+		kind: "PColumn",
+		name: "pl7.app/vdj/sequence/traceFile",
+		valueType: "File",
+		domain: maps.merge({ "pl7.app/fileExtension": "ab1" }, chainDomain(chain)),
+		axesSpec: [keyAxis(blockId).spec],
+		annotations: {
+			"pl7.app/label": LABEL[chain] + " Trace File",
+			"pl7.app/hideDataFromUi": "true"
+		}
+	}
+}
+
 export {
+	traceFileColumn: traceFileColumn,
 	variantSettings: variantSettings,
 	abundanceSettings: abundanceSettings
 }

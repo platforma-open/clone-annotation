@@ -825,6 +825,30 @@ def test_a_well_with_two_identical_candidates_counts_once():
     check("abundance counts wells", ab[0]["wellCount"], "2")
 
 
+def test_trace_reads_name_one_read_per_variant_and_chain():
+    import csv as _csv
+    from annotate import write_clones, write_trace_reads
+    rows = [sequence_nt("m0", "A1", "IGH", "H", "ACGT"),
+            sequence_nt("m1", "A1", "IGK", "KL", "GGGG"),
+            sequence_nt("m3", "B1", "IGH", "H", "ACGT"),
+            sequence_nt("m4", "B1", "IGK", "KL", "GGGG")]
+    sequences = [{"id": "m0", "reads": ["A1_H_F.ab1", "A1_H_R.ab1"]},
+                 {"id": "m1", "reads": ["A1_K_F.ab1"]},
+                 {"id": "m3", "reads": ["B1_H_F.ab1"]},
+                 {"id": "m4", "reads": ["B1_K_F.ab1"]}]
+    reads = [{"path": "A1_H_F.ab1", "usableLength": 300},
+             {"path": "A1_H_R.ab1", "usableLength": 420}]
+    work = tempfile.mkdtemp()
+    write_clones(os.path.join(work, "clones.tsv"), rows, sequences, [])
+    write_trace_reads(os.path.join(work, "trace_reads.tsv"), rows, sequences, reads)
+    clone = list(_csv.DictReader(open(os.path.join(work, "clones.tsv")), delimiter="\t"))[0]
+    got = list(_csv.DictReader(open(os.path.join(work, "trace_reads.tsv")), delimiter="\t"))
+    check("one row per chain of the one clone", [(r["variantKey"], r["chain"]) for r in got],
+          [(clone["variantKey"], "A"), (clone["variantKey"], "B")])
+    check("the first well, its longer read", [r["path"] for r in got],
+          ["A1_H_R.ab1", "A1_K_F.ab1"])
+
+
 def test_the_export_keeps_only_the_accepted_wells():
     import csv as _csv
     from annotate import accepted_wells, pair_up, write_abundance, write_clones

@@ -4,6 +4,9 @@ exec := import("@platforma-sdk/workflow-tengo:exec")
 file := import("@platforma-sdk/workflow-tengo:file")
 fmt := import("fmt")
 pframes := import("@platforma-sdk/workflow-tengo:pframes")
+pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
+render := import("@platforma-sdk/workflow-tengo:render")
+smart := import("@platforma-sdk/workflow-tengo:smart")
 pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
 xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
 clones := import(":clones")
@@ -15,6 +18,8 @@ readCols := import(":read-cols")
 wellCols := import(":well-cols")
 exportSpecs := import(":export-specs")
 tracy := import(":tracy")
+
+traceFilesTpl := assets.importTemplate(":trace-files")
 
 // Phred 20 is the conventional Sanger floor: one wrong base in a hundred.
 defaultQualityThreshold := 20
@@ -233,6 +238,7 @@ wf.body(func(args) {
 			arg("--out_pairs_tsv").arg("pairs.tsv").
 			arg("--out_clones_tsv").arg("clones.tsv").
 			arg("--out_abundance_tsv").arg("abundance.tsv").
+			arg("--out_trace_reads_tsv").arg("trace_reads.tsv").
 			arg("--out_plates_tsv").arg("plates.tsv").
 			arg("--out_wells_tsv").arg("wells.tsv").
 			saveFileContent("annotation.json").
@@ -240,6 +246,7 @@ wf.body(func(args) {
 			saveFile("pairs.tsv").
 			saveFile("clones.tsv").
 			saveFile("abundance.tsv").
+			saveFileContent("trace_reads.tsv").
 			saveFile("plates.tsv").
 			saveFile("wells.tsv").
 			printErrStreamToStdout().
@@ -344,7 +351,31 @@ wf.body(func(args) {
 		) {
 			toPool.add("abundance." + id, trace.inject(column.spec), column.data)
 		}
-		exports.variants = toPool.build()
+		variants := toPool.build()
+		exports.variants = variants
+		// The same frame for this block's own sequence viewer, which reads it from the
+		// outputs: the pool holds it under other ids, and both would be discovered.
+		outputs.variants = pframes.exportFrame(variants)
+
+		// One `.ab1` per variant and chain for the viewer, keyed as the variants are.
+		staged := pcolumn.resourceMapBuilder(1)
+		idOf := {}
+		for id, blob in blobs {
+			staged.add([id], blob)
+			idOf[manifest[id].path] = id
+		}
+		traceFiles := render.createEphemeral(traceFilesTpl, {
+			params: smart.createJsonResource({ idOf: idOf }),
+			traces: staged.build(),
+			traceReads: annotatedRun.getFileContent("trace_reads.tsv")
+		})
+		traceFilesBuilder := pframes.pFrameBuilder()
+		for side in ["heavy", "light"] {
+			traceFilesBuilder.add(side + "_trace_file",
+				trace.inject(exportSpecs.traceFileColumn(blockId, side)),
+				traceFiles.output(side))
+		}
+		outputs.traceFiles = pframes.exportFrame(traceFilesBuilder.build())
 	}
 
 	return {
