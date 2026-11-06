@@ -649,15 +649,29 @@ def test_a_domain_needs_cdr3_and_fr4():
     check("stops before CDR3", domain_complete({"aa": {"FR3": "YYC"}}), False)
 
 
+def test_region_status_flags_a_clipped_framework():
+    from annotate import region_status
+    whole = {"status": "Annotated",
+             "aa": {"FR1": "EVQLVESGGGLVQPGGSLRLSCAAS", "FR4": "WGQGTLVTVSS"}}
+    check("whole domain", region_status(whole), "Annotated")
+    clipped_fr4 = {"status": "Annotated",
+                   "aa": {"FR1": "EVQLVESGGGLVQPGGSLRLSCAAS", "FR4": "WGQ"}}
+    check("stops inside FR4", region_status(clipped_fr4), "Truncated")
+    clipped_fr1 = {"status": "Annotated",
+                   "aa": {"FR1": "SCAAS", "FR4": "WGQGTLVTVSS"}}
+    check("starts inside FR1", region_status(clipped_fr1), "Truncated")
+    check("no domain keeps its status", region_status({"status": "Failed", "aa": {}}), "Failed")
+
+
 def reverse(bases):
     return bases.translate(str.maketrans("ACGT", "TGCA"))[::-1]
 
 
 def test_mixed_positions_count_only_where_every_read_agrees():
-    from annotate import mixed_in_cdr3
+    from annotate import mixed_positions
     cdr3 = "TGTGCGAGAGATTAC"
     forward = {"bases": "AAAA" + cdr3 + "CCCC", "mixed": [0, 4, 6, 10]}
-    check("one read, CDR3 positions only", mixed_in_cdr3(cdr3, [forward]), 3)
+    check("one read, CDR3 positions only", mixed_positions(cdr3, [forward]), 3)
 
     # The reverse read holds CDR3 reverse-complemented, so its index
     # last - (at + i) is CDR3 position i. Mixed at CDR3 positions 0 and 6.
@@ -665,16 +679,26 @@ def test_mixed_positions_count_only_where_every_read_agrees():
     last = len(bases) - 1
     at = reverse(bases).find(cdr3)
     back = {"bases": bases, "mixed": [last - (at + 0), last - (at + 6)]}
-    check("reverse read alone", mixed_in_cdr3(cdr3, [back]), 2)
-    check("both reads: the intersection", mixed_in_cdr3(cdr3, [forward, back]), 2)
+    check("reverse read alone", mixed_positions(cdr3, [back]), 2)
+    check("both reads: the intersection", mixed_positions(cdr3, [forward, back]), 2)
 
 
 def test_mixed_is_not_assessed_without_a_read_showing_cdr3():
-    from annotate import mixed_in_cdr3
-    check("no reads", mixed_in_cdr3("TGTGCG", []), None)
-    check("CDR3 not in the read", mixed_in_cdr3("TGTGCG", [{"bases": "AAAAAA", "mixed": [1]}]),
+    from annotate import mixed_positions
+    check("no reads", mixed_positions("TGTGCG", []), None)
+    check("CDR3 not in the read", mixed_positions("TGTGCG", [{"bases": "AAAAAA", "mixed": [1]}]),
           None)
-    check("no CDR3", mixed_in_cdr3("", [{"bases": "AAAAAA", "mixed": [1]}]), None)
+    check("no CDR3", mixed_positions("", [{"bases": "AAAAAA", "mixed": [1]}]), None)
+
+
+def test_double_peaks_across_the_domain_flag_mixed_with_a_clean_cdr3():
+    from annotate import chain_reasons, DOMAIN_MIXED_LIMIT
+    over = described("m0", "P1", "A1", "IGH", "H",
+                     mixedPositions=0, mixedPositionsDomain=DOMAIN_MIXED_LIMIT + 1)
+    check("mixed along the framework, clean CDR3", "Mixed sequence" in chain_reasons(over)[1], True)
+    at = described("m1", "P1", "A1", "IGH", "H",
+                   mixedPositions=0, mixedPositionsDomain=DOMAIN_MIXED_LIMIT)
+    check("at the domain limit is fine", "Mixed sequence" in chain_reasons(at)[1], False)
 
 
 def described(seq_id, plate, well, chain, observed, **extra):

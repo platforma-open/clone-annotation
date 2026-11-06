@@ -44,6 +44,18 @@ for _i, _aa in enumerate(_AMINO):
 # nothing published says when a whole read is mixed.
 MIXED_LIMIT = 5
 
+# The same double-peak test over the whole domain, not only the CDR3: a second
+# template shows second peaks along the framework too. Higher than MIXED_LIMIT
+# because the domain is far longer than the CDR3. Provisional until calibrated
+# against a block run on known-mixed wells.
+DOMAIN_MIXED_LIMIT = 15
+
+# FR1 and FR4 are conserved frameworks, about 24 and 11 residues. A shorter one
+# means the read started inside FR1 or stopped inside FR4, so the VDJRegion is
+# clipped even though CDR3 and the genes are sound.
+MIN_FR1 = 20
+MIN_FR4 = 9
+
 PASSED = "Passed"
 WARNING = "Warning"
 FAILED = "Failed"
@@ -68,8 +80,8 @@ REASON_HELP = {
                          "ended early.",
     "Non productive": "The variable domain has a stop codon.",
     "Missing chain": "Only one chain of a paired antibody was found.",
-    "Mixed sequence": "More than %d double peaks in CDR3. Usually two templates in one well."
-                      % MIXED_LIMIT,
+    "Mixed sequence": "More than %d double peaks in CDR3, or more than %d across the whole "
+                      "domain. Usually two templates in one well." % (MIXED_LIMIT, DOMAIN_MIXED_LIMIT),
     "Chain label disagrees": "The file name says one chain, and the sequence reads as another.",
     "Ambiguous pairing": "A well holds more than one candidate for a chain, so the pair cannot be "
                          "chosen.",
@@ -342,32 +354,44 @@ def domain_complete(entry):
     return bool(amino.get("CDR3")) and bool(amino.get("FR4"))
 
 
+def region_status(entry):
+    """The value of the Regions column. "Truncated" where the domain numbered but
+    FR1 or FR4 is clipped: CDR3 and the genes are sound, the VDJRegion is not
+    whole. A read that failed to number at all keeps its status."""
+    if entry.get("status") != STATUS_ANNOTATED:
+        return entry.get("status", "")
+    amino = entry.get("aa") or {}
+    if len(amino.get("FR1", "")) < MIN_FR1 or len(amino.get("FR4", "")) < MIN_FR4:
+        return "Truncated"
+    return STATUS_ANNOTATED
+
+
 def reverse_complement(bases):
     return bases.translate(COMPLEMENT)[::-1]
 
 
-def mixed_in_cdr3(cdr3, reads):
-    """How many CDR3 positions carry a second peak, or None where no read shows
-    the CDR3 to look at.
+def mixed_positions(target, reads):
+    """How many positions of `target` carry a second peak, or None where no read
+    shows `target` to look at. `target` is the CDR3 or the whole domain nucleotide.
 
     `reads` are the trimmed reads behind the sequence, each with the indexes of
-    its mixed calls. A position counts only when every read that covers CDR3
+    its mixed calls. A position counts only when every read that covers `target`
     shows a second peak there: noise rarely repeats at the same spot in two
     reactions, and a second molecule does.
     """
-    if not cdr3:
+    if not target:
         return None
     found = []
     for read in reads:
         bases, mixed = read["bases"], set(read["mixed"])
-        at = bases.find(cdr3)
+        at = bases.find(target)
         if at >= 0:
-            found.append({i for i in range(len(cdr3)) if at + i in mixed})
+            found.append({i for i in range(len(target)) if at + i in mixed})
             continue
-        at = reverse_complement(bases).find(cdr3)
+        at = reverse_complement(bases).find(target)
         if at >= 0:
             last = len(bases) - 1
-            found.append({i for i in range(len(cdr3)) if last - (at + i) in mixed})
+            found.append({i for i in range(len(target)) if last - (at + i) in mixed})
     if not found:
         return None
     return len(set.intersection(*found))
@@ -479,7 +503,7 @@ def write_sequences(path, annotations, sequences, properties):
                  sequence.get("meanQuality", ""), sequence.get("qualityScale", ""),
                  sequence.get("mismatches") if sequence.get("mismatches") is not None else "",
                  sequence.get("extraReads", ""), sequence.get("reason", ""),
-                 entry.get("status", ""), entry.get("observedChain", ""),
+                 entry.get("regionStatus", entry.get("status", "")), entry.get("observedChain", ""),
                  entry.get("frame", ""), entry.get("productive", ""),
                  entry.get("stopRegion", ""), entry.get("mixedPositions", ""),
                  entry.get("vGene", ""), entry.get("dGene", ""),
@@ -829,7 +853,8 @@ def chain_reasons(entry):
         failed.add("Missing chain")
     if entry.get("pairStatus") == AMBIGUOUS:
         warning.add("Ambiguous pairing")
-    if (entry.get("mixedPositions") or 0) > MIXED_LIMIT:
+    if ((entry.get("mixedPositions") or 0) > MIXED_LIMIT
+            or (entry.get("mixedPositionsDomain") or 0) > DOMAIN_MIXED_LIMIT):
         warning.add("Mixed sequence")
     if entry.get("chainMismatch"):
         warning.add("Chain label disagrees")
@@ -1155,15 +1180,19 @@ def main(argv=None):
             if entry["status"] == STATUS_ANNOTATED:
                 entry["domainComplete"] = domain_complete(entry)
                 entry["stopRegion"] = stop_region(entry)
+                entry["regionStatus"] = region_status(entry)
                 # Unknown, not unproductive, where the read stopped short.
                 entry["productive"] = (
                     "" if not entry["domainComplete"] and not entry["stopRegion"]
                     else "no" if entry["stopRegion"] else "yes"
                 )
                 reads = [peaks[p] for p in sequence.get("reads", []) if p in peaks]
-                mixed = mixed_in_cdr3(bases.get("CDR3", "") if nucleotide else "", reads)
+                mixed = mixed_positions(bases.get("CDR3", "") if nucleotide else "", reads)
                 if mixed is not None:
                     entry["mixedPositions"] = mixed
+                mixed_all = mixed_positions(bases.get("VDJRegion", "") if nucleotide else "", reads)
+                if mixed_all is not None:
+                    entry["mixedPositionsDomain"] = mixed_all
 
         hit = aligned.get(chosen)
         if hit is not None:

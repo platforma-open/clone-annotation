@@ -8,6 +8,7 @@ import {
   AgGridTheme,
   makeRowNumberColDef,
   PlAgCellFile,
+  PlAgCellStatusTag,
   PlAgColumnHeader,
 } from "@platforma-sdk/ui-vue";
 import type { ColDef, GridApi, GridOptions, GridReadyEvent, IRowNode } from "ag-grid-enterprise";
@@ -55,6 +56,23 @@ const setAside = computed(() => {
 });
 
 const hasReads = computed(() => (app.model.outputs.traceReport?.reads.length ?? 0) > 0);
+
+/** The four tag colours PlAgCellStatusTag draws. */
+type StatusTag = "OK" | "WARN" | "ALERT" | "HOLD";
+
+/** The tag colour for a file, or undefined before the block has read it. */
+function readStatusTag(row?: FileRow): StatusTag | undefined {
+  if (row?.setAsideReason !== undefined) return "ALERT";
+  if (row?.read === undefined) return undefined;
+  return row.read.kept ? "OK" : "WARN";
+}
+
+/** A sortable word for the status, so the column still sorts and exports. */
+function readStatusLabel(row?: FileRow): string | undefined {
+  if (row?.setAsideReason !== undefined) return "Failed";
+  if (row?.read === undefined) return undefined;
+  return row.read.kept ? "Kept" : "Low quality";
+}
 
 const rowData = computed<FileRow[]>(() =>
   props.files.map((f) => {
@@ -130,13 +148,16 @@ const columnDefs = computed<ColDef<FileRow>[]>(() => [
         } satisfies ColDef<FileRow>,
         {
           headerName: "Status",
-          flex: 1,
-          // Blank while the block has not read this file. An empty cell and the
-          // word "kept" say different things.
-          valueGetter: (row) => {
-            if (row.data?.setAsideReason !== undefined) return row.data.setAsideReason;
-            return row.data?.read?.kept === true ? "Kept" : undefined;
+          width: 120,
+          // A coloured tag, not a greyed row: green when the read is kept, red
+          // when it was set aside, amber when a read came through but stayed
+          // below the quality floor. The set-aside reason shows on hover.
+          cellRendererSelector: (cell) => {
+            const type = readStatusTag(cell.data);
+            return type ? { component: PlAgCellStatusTag, params: { type } } : undefined;
           },
+          valueGetter: (row) => readStatusLabel(row.data),
+          tooltipValueGetter: (row) => row.data?.setAsideReason,
         } satisfies ColDef<FileRow>,
       ]
     : []),
@@ -191,9 +212,10 @@ const gridOptions: GridOptions<FileRow> = {
     ];
   },
   // A file the pattern did not capture is shown rather than hidden: the scientist
-  // needs to see what will be left out before importing.
+  // needs to see what will be left out before importing. A read the block set
+  // aside keeps its full colour now; the Status tag flags it instead.
   rowClassRules: {
-    "row-unmatched": (p) => p.data?.matched === false || p.data?.setAsideReason !== undefined,
+    "row-unmatched": (p) => p.data?.matched === false,
   },
 };
 </script>
