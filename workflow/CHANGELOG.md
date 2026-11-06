@@ -1,5 +1,13 @@
 # @platforma-open/milaboratories.clone-annotation.workflow
 
+## 1.0.4
+
+### Patch Changes
+
+- 3ae2b42: Improve trimming
+- Updated dependencies [3ae2b42]
+  - @platforma-open/milaboratories.clone-annotation.software@1.0.4
+
 ## 1.0.3
 
 ### Patch Changes
