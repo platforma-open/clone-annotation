@@ -17,7 +17,7 @@ SEQUENCE := {
 	mismatches: "Positions where the forward and reverse reads overlap but call different bases.",
 	extraReads: "Extra files for the same well, chain and direction. Only the first one is used.",
 	note: "Why the block made a choice for this sequence, for example a merge that failed.",
-	regionStatus: "\"Annotated\" when ANARCI found a variable domain, \"Failed\" when it found none.",
+	regionStatus: "\"Annotated\" when ANARCI found a whole variable domain, \"Truncated\" when it numbered one whose FR1 or FR4 is clipped, \"Failed\" when it found none.",
 	observedChain: "The chain class ANARCI found: H, KL (kappa or lambda), A, B, G or D.",
 	frame: "The reading frame the domain was found in. 0 to 2 read the sequence as it is, and 3 to 5 read its reverse complement.",
 	productive: "\"yes\" when the domain is complete and has no stop codon, \"no\" when it has a stop codon. Empty when the domain is incomplete.",
