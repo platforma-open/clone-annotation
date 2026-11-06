@@ -15,9 +15,9 @@ COLUMNS := [
 		description: "Wells where every chain was read, annotated and productive. For paired material, both chains are present and paired." },
 	{ column: "passedShare", type: "Double", label: "Passed, %", format: ".0%",
 		description: "Passed wells out of all wells on the plate." },
-	{ column: "heavyPassed", type: "Long", label: "Heavy Passed",
+	{ column: "heavyPassed", type: "Long", label: "Heavy Passed", side: "heavy",
 		description: "Wells with a heavy chain that was read, annotated and productive, whatever the other chain did." },
-	{ column: "lightPassed", type: "Long", label: "Light Passed",
+	{ column: "lightPassed", type: "Long", label: "Light Passed", side: "light",
 		description: "Wells with a light chain that was read, annotated and productive, whatever the other chain did." },
 	{ column: "warning", type: "Long", label: "Warning",
 		description: "Probably usable, but check them first. Reasons: Mixed sequence, Chain label disagrees, Ambiguous pairing." },
@@ -35,9 +35,20 @@ COLUMNS := [
 		description: "Wells that did not fail whose antibody is also in another such well on the plate. A high share means many cells of the same clone." }
 ]
 
-settings := func() {
+// `sides` lists the sides the set has sequences for. Undefined means both.
+settings := func(sides) {
+	has := { heavy: true, light: true }
+	if !is_undefined(sides) {
+		has = {}
+		for side in sides {
+			has[side] = true
+		}
+	}
 	columns := []
 	for i, c in COLUMNS {
+		if !is_undefined(c.side) && has[c.side] != true {
+			continue
+		}
 		annotations := {
 			"pl7.app/label": c.label,
 			"pl7.app/description": c.description,

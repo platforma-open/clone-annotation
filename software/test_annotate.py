@@ -228,15 +228,19 @@ def test_germline_joins_positionally_and_its_absence_is_reported():
     mixcr = os.path.join(work, "alignments.tsv")
     with open(mixcr, "w") as handle:
         handle.write("readId\ttargetSequences\taaSeqCDR3\ttopChains\tdescrsR1"
+                     "\tbestVGene\tbestDGene\tbestJGene"
                      "\tbestVHit\tbestDHit\tbestJHit\tbestVHitScore\tbestVAlignment\n")
-        handle.write("0\tACGT\tCARDY\tIGH\tm0"
+        handle.write("0\tACGT\tCARDY\tIGH\tm0\tIGHV3-23\t-\tIGHJ4"
                      "\tIGHV3-23*00\t-\tIGHJ4*00\t900\tSA63G\n")
 
     result = run_annotate(work, report, ["--csv_h", csv_h, "--mixcr", mixcr])
     by_id = {a["id"]: a for a in result["annotations"]}
-    check("v gene", by_id["m0"]["vGene"], "IGHV3-23*00")
-    check("j gene", by_id["m0"]["jGene"], "IGHJ4*00")
+    check("v gene", by_id["m0"]["vGene"], "IGHV3-23")
+    check("j gene", by_id["m0"]["jGene"], "IGHJ4")
+    check("v hit keeps the allele", by_id["m0"]["vHit"], "IGHV3-23*00")
+    check("j hit keeps the allele", by_id["m0"]["jHit"], "IGHJ4*00")
     check("a dash is no gene", by_id["m0"].get("dGene"), None)
+    check("a dash is no hit", by_id["m0"].get("dHit"), None)
     check("departures carried", by_id["m0"]["vAlignment"], "SA63G")
     check("no germline leaves no gene", by_id["m1"].get("vGene"), None)
     check("regions survive without germline", by_id["m1"]["status"], "Annotated")
@@ -305,6 +309,19 @@ def test_a_wrong_label_is_caught_on_a_heavy_only_plate():
     check("nothing to pair", rows[0]["pairStatus"], "Single domain")
     check("the light chain is flagged", rows[1].get("chainMismatch"), True)
     check("and listed", len(mismatched), 1)
+
+
+def test_only_the_sides_the_sequences_show_are_kept():
+    from annotate import sides_found
+    heavy = sequence("m0", "P1", "A1", "IGH", "k1", "H")
+    light = sequence("m1", "P1", "A1", "IGL", "k1", "KL")
+    check("heavy only", sides_found([heavy]), ["heavy"])
+    check("light only", sides_found([light]), ["light"])
+    check("both, heavy first", sides_found([light, heavy]), ["heavy", "light"])
+    # A label says nothing about what the sequence is.
+    check("only what was numbered counts", sides_found([heavy, sequence("m2", "P1", "A2", "IGL", "k2", "")]),
+          ["heavy"])
+    check("nothing numbered keeps both", sides_found([]), ["heavy", "light"])
 
 
 def test_two_chains_of_one_well_pair():
@@ -907,6 +924,7 @@ def test_the_cli_writes_the_plate_table_and_the_verdicts():
           [("A1", "Passed"), ("A2", "Failed")])
     check("total in the report", (result["total"]["wells"], result["total"]["passed"]), (2, 1))
     check("reasons explained in the report", len(result["reasonHelp"]), 8)
+    check("a heavy-only set reports one side", result["sides"], ["heavy"])
     table = list(csv.DictReader(open(plates_tsv), delimiter="\t"))
     check("one plate row", [(r["plate"], r["wells"], r["failed"]) for r in table],
           [("Plate1", "2", "1")])

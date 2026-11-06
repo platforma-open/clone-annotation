@@ -4,7 +4,6 @@ import { DEFAULT_NAME } from "@platforma-open/milaboratories.clone-annotation.mo
 import {
   PlBtnGhost,
   PlBtnPrimary,
-  PlBtnSecondary,
   PlDialogModal,
   PlFileDialog,
   PlTextField,
@@ -90,32 +89,36 @@ function doImport() {
 
     <PlTextField v-model="draft.name" label="Dataset Name" :clearable="() => ''" />
 
-    <PatternBuilder v-model="draft.pattern" :files="parsed" />
+    <!-- One group, so its parts sit closer than the dialog's own gap between sections. -->
+    <div class="pattern">
+      <PatternBuilder v-model="draft.pattern" :files="parsed" />
 
-    <div class="pattern-row">
-      <PlTextField
-        v-model="draft.pattern"
-        label="Pattern"
-        :placeholder="EXAMPLE"
-        :error="compiled.error"
-        clearable
-      />
-      <PatternHelp />
+      <div class="pattern-row">
+        <PlTextField
+          v-model="draft.pattern"
+          label="Pattern"
+          :placeholder="EXAMPLE"
+          :error="compiled.error"
+          clearable
+        />
+        <PatternHelp />
+      </div>
+
+      <FieldValues v-if="matchedCount > 0" :fields="fields" />
+
+      <ul v-if="warnings.length" class="warnings" data-testid="pattern-warnings">
+        <li v-for="w in warnings" :key="w">{{ w }}</li>
+      </ul>
     </div>
 
-    <FieldValues v-if="matchedCount > 0" :fields="fields" />
-
-    <ul v-if="warnings.length" class="warnings" data-testid="pattern-warnings">
-      <li v-for="w in warnings" :key="w">{{ w }}</li>
-    </ul>
-
     <ParsedFilesList :items="parsed" @remove="removeFiles" />
-
-    <PlBtnSecondary @click="() => (draft.filePickerOpen = true)">Add more files</PlBtnSecondary>
 
     <template #actions>
       <PlBtnPrimary :disabled="!canImport" @click="doImport">Import</PlBtnPrimary>
       <PlBtnGhost @click.stop="() => (draft.formOpen = false)">Cancel</PlBtnGhost>
+      <PlBtnGhost class="add-files" icon="add" @click="() => (draft.filePickerOpen = true)">
+        Add more files
+      </PlBtnGhost>
     </template>
   </PlDialogModal>
 
@@ -129,6 +132,12 @@ function doImport() {
 </template>
 
 <style scoped>
+.pattern {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .pattern-row {
   display: flex;
   align-items: flex-end;
@@ -139,8 +148,12 @@ function doImport() {
   flex: 1;
 }
 
+.add-files {
+  margin-left: auto;
+}
+
 .warnings {
-  margin: 0 0 8px;
+  margin: 0;
   padding-left: 18px;
   font-size: 12px;
   color: var(--warn-01, #b36b00);

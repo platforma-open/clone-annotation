@@ -4,22 +4,20 @@ exec := import("@platforma-sdk/workflow-tengo:exec")
 file := import("@platforma-sdk/workflow-tengo:file")
 fmt := import("fmt")
 pframes := import("@platforma-sdk/workflow-tengo:pframes")
-pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
 xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
+render := import("@platforma-sdk/workflow-tengo:render")
+smart := import("@platforma-sdk/workflow-tengo:smart")
 clones := import(":clones")
 sequenceCols := import(":sequence-cols")
-pairCols := import(":pair-cols")
-cloneCols := import(":clone-cols")
-plateCols := import(":plate-cols")
 readCols := import(":read-cols")
-wellCols := import(":well-cols")
-exportSpecs := import(":export-specs")
 tracy := import(":tracy")
 
 // Phred 20 is the conventional Sanger floor: one wrong base in a hundred.
 defaultQualityThreshold := 20
 defaultScheme := "imgt"
 defaultSpecies := "hsa"
+
+tablesTpl := assets.importTemplate(":tables")
 
 wf.setPreRun(assets.importTemplate(":prerun"))
 
@@ -193,6 +191,9 @@ wf.body(func(args) {
 			arg("exportAlignments").
 			arg("-descrsR1").
 			arg("-topChains").
+			arg("-vGene").
+			arg("-dGene").
+			arg("-jGene").
 			arg("-vHit").
 			arg("-dHit").
 			arg("-jHit").
@@ -235,7 +236,9 @@ wf.body(func(args) {
 			arg("--out_abundance_tsv").arg("abundance.tsv").
 			arg("--out_plates_tsv").arg("plates.tsv").
 			arg("--out_wells_tsv").arg("wells.tsv").
+			arg("--out_sides").arg("sides.json").
 			saveFileContent("annotation.json").
+			saveFileContent("sides.json").
 			saveFile("sequences.tsv").
 			saveFile("pairs.tsv").
 			saveFile("clones.tsv").
@@ -273,78 +276,31 @@ wf.body(func(args) {
 		}
 		outputs.sequencesTable = pframes.exportFrame(sequencesBuilder.build())
 
-		pairsBuilder := pframes.pFrameBuilder()
-		for id, column in xsv.importFile(
-			annotatedRun.getFile("pairs.tsv"), "tsv",
-			pairCols.settings(), { splitDataAndSpec: true }
-		) {
-			pairsBuilder.add(id, column.spec, column.data)
-		}
-		outputs.pairsTable = pframes.exportFrame(pairsBuilder.build())
-
-		clonesBuilder := pframes.pFrameBuilder()
-		for id, column in xsv.importFile(
-			annotatedRun.getFile("clones.tsv"), "tsv",
-			cloneCols.settings(args.properties), { splitDataAndSpec: true }
-		) {
-			clonesBuilder.add(id, column.spec, column.data)
-		}
-		outputs.clonesTable = pframes.exportFrame(clonesBuilder.build())
-
-		platesBuilder := pframes.pFrameBuilder()
-		for id, column in xsv.importFile(
-			annotatedRun.getFile("plates.tsv"), "tsv",
-			plateCols.settings(), { splitDataAndSpec: true }
-		) {
-			platesBuilder.add(id, column.spec, column.data)
-		}
-		outputs.plateSummaryTable = pframes.exportFrame(platesBuilder.build())
-
-		wellsBuilder := pframes.pFrameBuilder()
-		for id, column in xsv.importFile(
-			annotatedRun.getFile("wells.tsv"), "tsv",
-			wellCols.settings(args.properties), { splitDataAndSpec: true }
-		) {
-			wellsBuilder.add(id, column.spec, column.data)
-		}
-		outputs.plateMap = pframes.exportFrame(wellsBuilder.build())
-
-		// What leaves the block. One frame, the record key on axis 0, and the
-		// plate carried only under abundance.
-		//
-		// The trace is what names the dataset everywhere downstream. Without it
-		// a consumer falls back to the anchor column's own label, so the set
-		// shows up called after whatever that column happens to be.
+		// Built once the run says which chains the set holds.
 		label := args.name
 		if is_undefined(label) || label == "" {
 			label = "Clone Annotation"
 		}
-		// makeTrace eats its first argument as the upstream trace and treats
-		// only the rest as steps. This block has no upstream, so an empty map
-		// stands in; passing the step alone silently produces an empty trace.
-		trace := pSpec.makeTrace({}, {
-			type: "milaboratories.clone-annotation",
-			id: blockId,
-			importance: 30,
-			label: label
+		params := { blockId: blockId, label: label, scheme: scheme }
+		if !is_undefined(args.properties) {
+			params.properties = args.properties
+		}
+		// Ephemeral, because it waits on the run's output before it can say
+		// which columns exist. A pure template may not await.
+		tables := render.createEphemeral(tablesTpl, {
+			sides: annotatedRun.getFileContent("sides.json"),
+			pairs: annotatedRun.getFile("pairs.tsv"),
+			clones: annotatedRun.getFile("clones.tsv"),
+			abundance: annotatedRun.getFile("abundance.tsv"),
+			plates: annotatedRun.getFile("plates.tsv"),
+			wells: annotatedRun.getFile("wells.tsv"),
+			params: smart.createJsonResource(params)
 		})
-
-		toPool := pframes.pFrameBuilder()
-		for id, column in xsv.importFile(
-			annotatedRun.getFile("clones.tsv"), "tsv",
-			exportSpecs.variantSettings(blockId, args.properties, scheme),
-			{ splitDataAndSpec: true }
-		) {
-			toPool.add("variant." + id, trace.inject(column.spec), column.data)
-		}
-		for id, column in xsv.importFile(
-			annotatedRun.getFile("abundance.tsv"), "tsv",
-			exportSpecs.abundanceSettings(blockId),
-			{ splitDataAndSpec: true }
-		) {
-			toPool.add("abundance." + id, trace.inject(column.spec), column.data)
-		}
-		exports.variants = toPool.build()
+		outputs.pairsTable = pframes.exportFrame(tables.output("pairsTable"))
+		outputs.clonesTable = pframes.exportFrame(tables.output("clonesTable"))
+		outputs.plateSummaryTable = pframes.exportFrame(tables.output("plateSummaryTable"))
+		outputs.plateMap = pframes.exportFrame(tables.output("plateMap"))
+		exports.variants = tables.output("variants")
 	}
 
 	return {

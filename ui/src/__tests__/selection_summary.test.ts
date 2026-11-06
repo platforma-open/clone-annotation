@@ -181,19 +181,7 @@ describe("checkSelection", () => {
     ]);
   });
 
-  test("a skipped part that changes from file to file", () => {
-    expect(check("{{*}}_{{Well}}.ab1", ["run1_A1.ab1", "run2_A2.ab1"])).toEqual([
-      "The skipped part {{*}} has 2 different values, for example run1, run2. If they matter, read it as a tag, like {{:Run}}.",
-    ]);
-  });
-
-  test("a skipped part with one value is fine", () => {
-    expect(check("{{*}}_{{Well}}.ab1", ["run1_A1.ab1", "run1_A2.ab1"])).toEqual([]);
-  });
-
-  test("several skipped parts are told apart by number", () => {
-    expect(check("{{*}}_{{Well}}_{{*}}.ab1", ["x_A1_a.ab1", "x_A2_b.ab1"])).toEqual([
-      "Skipped part 2 ({{*}}) has 2 different values, for example a, b. If they matter, read it as a tag, like {{:Run}}.",
-    ]);
+  test("a skipped part that changes from file to file is not reported", () => {
+    expect(check("{{*}}_{{Well}}.ab1", ["run1_A1.ab1", "run2_A2.ab1"])).toEqual([]);
   });
 });

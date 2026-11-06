@@ -75,7 +75,12 @@ col := func(column, valueType, label, shown) {
 	}
 }
 
-settings := func(properties) {
+// `sides` lists the sides the set has sequences for. Undefined means both.
+settings := func(properties, sides) {
+	if is_undefined(sides) {
+		sides = SIDES
+	}
+
 	columns := [
 		col("cloneId", "String", "Clone Id", true),
 		col("wells", "String", "Wells", true),
@@ -85,7 +90,7 @@ settings := func(properties) {
 		col("qcReason", "String", "QC Reason", false)
 	]
 
-	for side in SIDES {
+	for side in sides {
 		title := side == "heavy" ? "Heavy" : "Light"
 		for f in PER_SIDE {
 			name := side + "_" + f

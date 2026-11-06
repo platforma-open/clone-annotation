@@ -38,8 +38,8 @@ Tracy reads the traces, handling ABIF and SCF through one reader, and keeps per-
 Forward and reverse reads of the same chain merge into one consensus. A quality threshold decides
 what is kept, and everything set aside is listed with its reason rather than disappearing.
 
-MiXCR then aligns each sequence, giving framework and CDR boundaries, germline V and J calls, and the
-observed chain. Where the observed chain disagrees with the one the file name asserted, the block
+ANARCI then numbers each sequence, giving framework and CDR boundaries and the observed chain. MiXCR
+aligns it to germline genes, giving the V, D and J calls. Where the observed chain disagrees with the one the file name asserted, the block
 says so instead of trusting the label. Sequences MiXCR cannot describe are listed.
 
 ## Pairing And Collapse
@@ -63,3 +63,16 @@ Trace reading, merging and alignment use Tracy, part of
 > Rausch, T., Fritz, M. H., Untergasser, A., & Benes, V. (2020). Tracy: basecalling, alignment,
 > assembly and deconvolution of sanger chromatogram trace files. *BMC Genomics* **21**, 230.
 > [https://doi.org/10.1186/s12864-020-6635-8](https://doi.org/10.1186/s12864-020-6635-8)
+
+MiXCR is developed by MiLaboratories Inc. It aligns each sequence to germline genes. For more
+information, please see the [MiXCR website](https://mixcr.com/) and cite:
+
+> Bolotin, D., Poslavsky, S., Mitrophanov, I. et al. MiXCR: software for comprehensive adaptive
+> immunity profiling. _Nat Methods_ **12**, 380–381 (2015)
+> [https://doi.org/10.1038/nmeth.3364](https://doi.org/10.1038/nmeth.3364)
+
+Residue numbering, region boundaries and the chain call use [ANARCI](https://github.com/oxpig/ANARCI):
+
+> Dunbar J and Deane CM. *ANARCI: antigen receptor numbering and receptor classification.*
+> Bioinformatics, 32(2):298-300 (2016).
+> [https://doi.org/10.1093/bioinformatics/btv552](https://doi.org/10.1093/bioinformatics/btv552)

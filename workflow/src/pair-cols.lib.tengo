@@ -70,7 +70,12 @@ col := func(column, valueType, label) {
 	}
 }
 
-settings := func() {
+// `sides` lists the sides the set has sequences for. Undefined means both.
+settings := func(sides) {
+	if is_undefined(sides) {
+		sides = SIDES
+	}
+
 	columns := [
 		col("plate", "String", "Plate"),
 		col("well", "String", "Well"),
@@ -78,7 +83,7 @@ settings := func() {
 		col("qcReason", "String", "QC Reason")
 	]
 
-	for side in SIDES {
+	for side in sides {
 		title := side == "heavy" ? "Heavy" : "Light"
 		for f in PER_SIDE {
 			columns = append(columns,

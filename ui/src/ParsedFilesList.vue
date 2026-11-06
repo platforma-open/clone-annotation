@@ -119,8 +119,7 @@ function onListClick(e: MouseEvent) {
 
 .matchText {
   display: flex;
-  height: 40px;
-  padding: 12px 0;
+  padding: 8px 0 4px;
   align-items: center;
   font-size: 11px;
   font-weight: 600;

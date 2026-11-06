@@ -67,6 +67,8 @@ function percent(share: number): string {
   return `${Math.round(share * 100)}%`;
 }
 
+const sides = computed(() => app.model.outputs.annotation?.sides ?? ["heavy", "light"]);
+
 const stats = computed(() => {
   const t = total.value;
   const floor =
@@ -78,10 +80,13 @@ const stats = computed(() => {
     { label: "Plates", value: String(t.plates) },
     { label: "Wells", value: String(t.wells) },
     { label: "Passed", value: `${t.passed} (${percent(t.passedShare)})` },
-    { label: "Heavy passed", value: String(t.heavyPassed) },
-    ...(app.model.outputs.annotation?.paired === false
-      ? []
-      : [{ label: "Light passed", value: String(t.lightPassed) }]),
+    // Only the sides the set has sequences for, as in the plate table.
+    ...(sides.value.includes("heavy")
+      ? [{ label: "Heavy passed", value: String(t.heavyPassed) }]
+      : []),
+    ...(sides.value.includes("light")
+      ? [{ label: "Light passed", value: String(t.lightPassed) }]
+      : []),
     { label: "Warning", value: String(t.warning) },
     { label: "Failed", value: String(t.failed) },
     { label: "Usable reads", value: percent(t.usableReadsShare) },
@@ -110,46 +115,47 @@ const sheetLists = computed(() =>
 </script>
 
 <template>
-  <PlBlockPage>
+  <!-- The map takes the full width, so the gutters come off on its tab. -->
+  <PlBlockPage :no-body-gutters="tab === 'plateMap'">
     <template #title>Plate View</template>
 
     <template #append>
-      <PlBtnGhost v-if="reasonGroups.length > 0" @click.stop="() => (reasonsOpen = true)">
-        QC Reasons
-        <template #append>
-          <PlMaskIcon24 name="info-outline" />
-        </template>
-      </PlBtnGhost>
-      <PlBtnGhost @click.stop="() => (statsOpen = true)">
-        Stats
-        <template #append>
-          <PlMaskIcon24 name="statistics" />
-        </template>
-      </PlBtnGhost>
+      <!-- The table puts its own controls (Filters, Columns) right before this slot.
+           Every button's own padding spaces the row evenly. -->
+      <div :class="$style.appended">
+        <PlBtnGhost v-if="reasonGroups.length > 0" @click.stop="() => (reasonsOpen = true)">
+          QC Reasons
+          <template #append>
+            <PlMaskIcon24 name="info-outline" />
+          </template>
+        </PlBtnGhost>
+        <PlBtnGhost @click.stop="() => (statsOpen = true)">
+          Stats
+          <template #append>
+            <PlMaskIcon24 name="statistics" />
+          </template>
+        </PlBtnGhost>
+        <PlTabs v-model="tab" :class="$style.tabs" :options="TABS" :top-line="false" />
+      </div>
     </template>
 
-    <!-- A row of its own: the table pins Filters, Columns and Export to the title line. -->
-    <PlTabs v-model="tab" :options="TABS" />
+    <PlDataTableV2
+      v-if="tab === 'metrics'"
+      v-model="app.model.data.plateTableState"
+      :settings="tableSettings"
+      not-ready-text="Run the block to see how each plate came out."
+      no-rows-text="No plates."
+    />
 
-    <div v-if="tab === 'metrics'" :class="$style.body">
-      <PlDataTableV2
-        v-model="app.model.data.plateTableState"
-        :settings="tableSettings"
-        not-ready-text="Run the block to see how each plate came out."
-        no-rows-text="No plates."
-      />
-    </div>
-
-    <div v-else :class="$style.body">
-      <GraphMaker
-        v-model="app.model.data.plateMapGraph"
-        chart-type="heatmap"
-        :data-state-key="app.model.outputs.plateMapPf"
-        :p-frame="app.model.outputs.plateMapPf"
-        :default-options="plateMapDefaults"
-        :status-text="plateMapNotRun"
-      />
-    </div>
+    <GraphMaker
+      v-else
+      v-model="app.model.data.plateMapGraph"
+      chart-type="heatmap"
+      :data-state-key="app.model.outputs.plateMapPf"
+      :p-frame="app.model.outputs.plateMapPf"
+      :default-options="plateMapDefaults"
+      :status-text="plateMapNotRun"
+    />
 
     <PlDialogModal v-model="reasonsOpen" width="560px" close-on-outside-click>
       <template #title>QC Reasons</template>
@@ -192,9 +198,15 @@ const sheetLists = computed(() =>
 </template>
 
 <style module>
-.body {
-  flex: 1;
-  min-height: 300px;
+.appended {
+  display: flex;
+  align-items: center;
+}
+
+/* The buttons' own 12px padding already spaces them. The tabs have no side
+   padding at their underline, so they get the button's 12px here. */
+.tabs {
+  margin-left: 12px;
 }
 
 .heading {

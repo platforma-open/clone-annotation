@@ -10,6 +10,7 @@ maps := import("@platforma-sdk/workflow-tengo:maps")
 strings := import("@platforma-sdk/workflow-tengo:strings")
 
 CHAINS := ["IGHeavy", "IGLight"]
+CHAIN_OF := { heavy: "IGHeavy", light: "IGLight" }
 SIDE := { IGHeavy: "heavy", IGLight: "light" }
 LABEL := { IGHeavy: "Heavy", IGLight: "Light" }
 PAIRED_DOMAIN := { IGHeavy: "A", IGLight: "B" }
@@ -17,8 +18,11 @@ RECEPTOR := "IG"
 
 FEATURES := ["VDJRegion", "FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"]
 ALPHABETS := { aa: "aminoacid", nt: "nucleotide" }
-GENES := { vGene: "VGene", dGene: "DGene", jGene: "JGene" }
-GENE_LABEL := { vGene: "V Gene", dGene: "D Gene", jGene: "J Gene" }
+GENES := [
+	{ gene: "vGene", hit: "vHit", reference: "VGene", label: "V" },
+	{ gene: "dGene", hit: "dHit", reference: "DGene", label: "D" },
+	{ gene: "jGene", hit: "jHit", reference: "JGene", label: "J" }
+]
 SUMMARY_LABEL := { min: "Min", median: "Median", max: "Max", mean: "Mean" }
 
 a := func(priority, visibility, extra) {
@@ -76,10 +80,10 @@ sampleAxis := func(blockId) {
 // The scheme decides where each region ends. A consumer that checks conserved
 // residues reads it from the region columns: the liabilities block, missing it,
 // expects the cysteine at the start of CDR3, where only MiXCR's CDR3 has it.
-sequenceColumns := func(scheme) {
+sequenceColumns := func(scheme, chains) {
 	columns := []
 	priority := 46900
-	for chain in CHAINS {
+	for chain in chains {
 		for f in FEATURES {
 			for short, alphabet in ALPHABETS {
 				// The whole domain in amino acids is what a reader means by
@@ -119,26 +123,33 @@ sequenceColumns := func(scheme) {
 	return columns
 }
 
-geneColumns := func() {
+// The same names as MiXCR's clonotyping blocks: the gene without its allele is
+// shown, the hit with its allele is offered.
+geneColumns := func(chains) {
 	columns := []
 	priority := 45000
-	for chain in CHAINS {
-		for column, reference in GENES {
-			columns = append(columns, {
-				column: SIDE[chain] + "_" + column,
-				allowNA: true,
-				spec: {
-					name: "pl7.app/vdj/geneHit",
-					valueType: "String",
-					domain: maps.merge({ "pl7.app/vdj/reference": reference },
-						chainDomain(chain)),
-					annotations: a(string(priority), "default", {
-						"pl7.app/label": LABEL[chain] + " " + GENE_LABEL[column],
-						"pl7.app/isDiscreteFilter": "true"
-					})
-				}
-			})
-			priority = priority - 10
+	for chain in chains {
+		for g in GENES {
+			for variant in [
+				{ column: g.gene, name: "pl7.app/vdj/geneHit", label: " Gene", visibility: "default" },
+				{ column: g.hit, name: "pl7.app/vdj/geneHitWithAllele", label: " Hit with Allele", visibility: "optional" }
+			] {
+				columns = append(columns, {
+					column: SIDE[chain] + "_" + variant.column,
+					allowNA: true,
+					spec: {
+						name: variant.name,
+						valueType: "String",
+						domain: maps.merge({ "pl7.app/vdj/reference": g.reference },
+							chainDomain(chain)),
+						annotations: a(string(priority), variant.visibility, {
+							"pl7.app/label": LABEL[chain] + " " + g.label + variant.label,
+							"pl7.app/isDiscreteFilter": "true"
+						})
+					}
+				})
+				priority = priority - 10
+			}
 		}
 	}
 	return columns
@@ -279,10 +290,19 @@ addAll := func(into, more) {
 	return into
 }
 
-variantSettings := func(blockId, properties, scheme) {
+// `sides` lists the sides the set has sequences for. Undefined means both: a
+// heavy-only set exports no light chain columns at all.
+variantSettings := func(blockId, properties, scheme, sides) {
+	chains := CHAINS
+	if !is_undefined(sides) {
+		chains = []
+		for side in sides {
+			chains = append(chains, CHAIN_OF[side])
+		}
+	}
 	columns := [cloneIdColumn(), wellsColumn(), pairingColumn()]
-	columns = addAll(columns, sequenceColumns(scheme))
-	columns = addAll(columns, geneColumns())
+	columns = addAll(columns, sequenceColumns(scheme, chains))
+	columns = addAll(columns, geneColumns(chains))
 	columns = addAll(columns, propertyColumns(properties))
 	return {
 		axes: [keyAxis(blockId)],

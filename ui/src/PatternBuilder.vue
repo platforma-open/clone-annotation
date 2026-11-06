@@ -390,7 +390,6 @@ function pieceTitle(p: Piece): string | undefined {
 
 <style module>
 .builder {
-  margin: 8px 0 12px;
   font-size: 12px;
 }
 

@@ -171,27 +171,5 @@ export function checkSelection(files: SelectedFile[], pattern: PathPattern): str
     }
   }
 
-  const skips = pattern.rawElements.anyMatchers;
-  skips.forEach((ranges, i) => {
-    // A skip inside an absent [ ] section leaves no entry, so positions only line
-    // up in files that have every skipped part.
-    const values = [
-      ...new Set(
-        matches
-          .filter((m) => m.anyMatchers.length === skips.length)
-          .map((m) => m.anyMatchers[i]!.value),
-      ),
-    ];
-    if (values.length < 2) return;
-    const token = pattern.rawPattern.slice(ranges[0]!.from, ranges[0]!.to);
-    const which =
-      skips.length > 1 ? `Skipped part ${i + 1} (${token})` : `The skipped part ${token}`;
-    out.push(
-      `${which} has ${values.length} different values, for example ${examples(
-        values,
-      )}. If they matter, read it as a tag, like {{:Run}}.`,
-    );
-  });
-
   return out;
 }

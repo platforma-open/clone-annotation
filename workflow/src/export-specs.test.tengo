@@ -3,8 +3,8 @@ exportSpecs := import(":export-specs")
 
 // Two chains, eight features, two alphabets.
 SEQUENCE_COLUMNS := 32
-// Two chains, V, D and J.
-GENE_COLUMNS := 6
+// Two chains, V, D and J, each as a gene and as a hit with its allele.
+GENE_COLUMNS := 12
 // Clone Id, wells and pairing.
 FIXED_COLUMNS := 3
 
@@ -19,27 +19,43 @@ countOf := func(settings, name) {
 }
 
 TestVariantSettingsBuildEveryColumn := func() {
-	s := exportSpecs.variantSettings("blk", undefined, "imgt")
+	s := exportSpecs.variantSettings("blk", undefined, "imgt", undefined)
 	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + FIXED_COLUMNS, len(s.columns))
 	test.isEqual(SEQUENCE_COLUMNS, countOf(s, "pl7.app/vdj/sequence"))
-	test.isEqual(GENE_COLUMNS, countOf(s, "pl7.app/vdj/geneHit"))
+	test.isEqual(GENE_COLUMNS / 2, countOf(s, "pl7.app/vdj/geneHit"))
+	test.isEqual(GENE_COLUMNS / 2, countOf(s, "pl7.app/vdj/geneHitWithAllele"))
+}
+
+TestTheGeneIsShownAndTheAlleleOffered := func() {
+	s := exportSpecs.variantSettings("blk", undefined, "imgt", ["heavy"])
+	for c in s.columns {
+		if c.column == "heavy_vGene" {
+			test.isEqual("pl7.app/vdj/geneHit", c.spec.name)
+			test.isEqual("default", c.spec.annotations["pl7.app/table/visibility"])
+		}
+		if c.column == "heavy_vHit" {
+			test.isEqual("pl7.app/vdj/geneHitWithAllele", c.spec.name)
+			test.isEqual("optional", c.spec.annotations["pl7.app/table/visibility"])
+			test.isEqual("VGene", c.spec.domain["pl7.app/vdj/reference"])
+		}
+	}
 }
 
 TestTheRecordKeyIsTheOnlyAxis := func() {
-	s := exportSpecs.variantSettings("blk", undefined, "imgt")
+	s := exportSpecs.variantSettings("blk", undefined, "imgt", undefined)
 	test.isEqual(1, len(s.axes))
 	test.isEqual("pl7.app/variantKey", s.axes[0].spec.name)
 }
 
 TestTheKeyAxisNamesItsRunAndModality := func() {
-	domain := exportSpecs.variantSettings("blk", undefined, "imgt").axes[0].spec.domain
+	domain := exportSpecs.variantSettings("blk", undefined, "imgt", undefined).axes[0].spec.domain
 	test.isEqual("blk", domain["pl7.app/blockId"])
 	test.isEqual("vdj", domain["pl7.app/modality"])
 	test.isEqual("blk", domain["pl7.app/vdj/clonotypingRunId"])
 }
 
 TestTheChainsAreSeparatedByDomainNotByAxis := func() {
-	s := exportSpecs.variantSettings("blk", undefined, "imgt")
+	s := exportSpecs.variantSettings("blk", undefined, "imgt", undefined)
 	sides := {}
 	for c in s.columns {
 		if c.spec.name == "pl7.app/vdj/sequence" {
@@ -51,7 +67,7 @@ TestTheChainsAreSeparatedByDomainNotByAxis := func() {
 }
 
 TestRegionsCarryTheScheme := func() {
-	s := exportSpecs.variantSettings("blk", undefined, "kabat")
+	s := exportSpecs.variantSettings("blk", undefined, "kabat", undefined)
 	for c in s.columns {
 		if c.spec.name != "pl7.app/vdj/sequence" {
 			continue
@@ -68,14 +84,14 @@ TestRegionsCarryTheScheme := func() {
 
 TestAPropertyBringsItsValuesAndItsSummaries := func() {
 	props := [{ name: "elisa", type: "Double", values: {} }]
-	s := exportSpecs.variantSettings("blk", props, "imgt")
+	s := exportSpecs.variantSettings("blk", props, "imgt", undefined)
 	// values, disagrees, and four summaries.
 	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + FIXED_COLUMNS + 6, len(s.columns))
 }
 
 TestALabelGetsNoSummaries := func() {
 	props := [{ name: "note", type: "String", values: {} }]
-	s := exportSpecs.variantSettings("blk", props, "imgt")
+	s := exportSpecs.variantSettings("blk", props, "imgt", undefined)
 	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + FIXED_COLUMNS + 2, len(s.columns))
 }
 
@@ -94,7 +110,7 @@ TestAbundanceIsPartitionedOnThePlateAxis := func() {
 }
 
 TestVariantColumnsAreNotPartitioned := func() {
-	test.isEqual(0, exportSpecs.variantSettings("blk", undefined, "imgt").partitionKeyLength)
+	test.isEqual(0, exportSpecs.variantSettings("blk", undefined, "imgt", undefined).partitionKeyLength)
 }
 
 // makeTrace eats its first argument as the upstream trace, so a source block
@@ -123,4 +139,17 @@ TestTheTraceReachesTheColumnSpec := func() {
 	injected := trace.inject(spec)
 	test.isTrue(injected.annotations["pl7.app/trace"] != "[]")
 	test.isTrue(injected.annotations["pl7.app/trace"] != undefined)
+}
+
+TestAHeavyOnlySetExportsNoLightChain := func() {
+	s := exportSpecs.variantSettings("blk", undefined, "imgt", ["heavy"])
+	test.isEqual(SEQUENCE_COLUMNS / 2, countOf(s, "pl7.app/vdj/sequence"))
+	test.isEqual(GENE_COLUMNS / 4, countOf(s, "pl7.app/vdj/geneHit"))
+	test.isEqual(GENE_COLUMNS / 4, countOf(s, "pl7.app/vdj/geneHitWithAllele"))
+	for c in s.columns {
+		if c.spec.name == "pl7.app/vdj/sequence" || c.spec.name == "pl7.app/vdj/geneHit" ||
+			c.spec.name == "pl7.app/vdj/geneHitWithAllele" {
+			test.isEqual("A", c.spec.domain["pl7.app/vdj/scClonotypeChain"])
+		}
+	}
 }

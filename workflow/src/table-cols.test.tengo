@@ -19,9 +19,9 @@ hasColumn := func(settings, name) {
 // alone leaves the page empty with no error anywhere, so the names are pinned.
 TestEachTableCarriesTheColumnTheModelAnchorsOn := func() {
 	test.isTrue(hasColumn(sequenceCols.settings(undefined), "pl7.app/vdj/sequence/well"))
-	test.isTrue(hasColumn(pairCols.settings(), "pl7.app/vdj/pair/well"))
-	test.isTrue(hasColumn(cloneCols.settings(undefined), "pl7.app/vdj/clone/wellCount"))
-	test.isTrue(hasColumn(plateCols.settings(), "pl7.app/vdj/qc/wells"))
+	test.isTrue(hasColumn(pairCols.settings(undefined), "pl7.app/vdj/pair/well"))
+	test.isTrue(hasColumn(cloneCols.settings(undefined, undefined), "pl7.app/vdj/clone/wellCount"))
+	test.isTrue(hasColumn(plateCols.settings(undefined), "pl7.app/vdj/qc/wells"))
 	test.isTrue(hasColumn(readCols.settings(), "pl7.app/vdj/qc/read/meanQuality"))
 	test.isTrue(hasColumn(readCols.settings(), "pl7.app/vdj/qc/read/usableLength"))
 	test.isTrue(hasColumn(readCols.settings(), "pl7.app/vdj/qc/read/plate"))
@@ -39,7 +39,7 @@ TestTheTablesDoNotShareAnAxis := func() {
 
 // The share is a fraction; only the format makes it read as a percent.
 TestTheGoodShareShowsAsAPercent := func() {
-	for c in plateCols.settings().columns {
+	for c in plateCols.settings(undefined).columns {
 		if c.column == "passedShare" {
 			test.isEqual(".0%", c.spec.annotations["pl7.app/format"])
 			test.isEqual("Double", c.spec.valueType)
@@ -61,17 +61,17 @@ TestResultColumnsCarryTheirTooltips := func() {
 	test.isEqual("Positions where the forward and reverse reads overlap but call different bases.",
 		descriptionOf(sequenceCols.settings(undefined), "mismatches"))
 	test.isEqual(descriptionOf(sequenceCols.settings(undefined), "source"),
-		descriptionOf(pairCols.settings(), "heavy_source"))
+		descriptionOf(pairCols.settings(undefined), "heavy_source"))
 	test.isEqual(descriptionOf(sequenceCols.settings(undefined), "detectedChain"),
-		descriptionOf(cloneCols.settings(props), "light_chain"))
-	test.isEqual("The highest of the wells' values.", descriptionOf(cloneCols.settings(props), "prop_0_max"))
-	test.isTrue(is_undefined(descriptionOf(cloneCols.settings(props), "cloneId")), "no tooltip on Clone Id")
+		descriptionOf(cloneCols.settings(props, undefined), "light_chain"))
+	test.isEqual("The highest of the wells' values.", descriptionOf(cloneCols.settings(props, undefined), "prop_0_max"))
+	test.isTrue(is_undefined(descriptionOf(cloneCols.settings(props, undefined), "cloneId")), "no tooltip on Clone Id")
 	test.isTrue(is_undefined(descriptionOf(sequenceCols.settings(undefined), "plate")), "none where the name says it")
 }
 
 // The UI reads the verdict column's axes as plate, row and column, in that order.
 TestThePlateMapIsKeyedByPlateRowAndColumn := func() {
-	s := wellCols.settings([{ name: "Titer", type: "Double" }])
+	s := wellCols.settings([{ name: "Titer", type: "Double" }], undefined)
 	test.isEqual("pl7.app/vdj/plateMap/plate", s.axes[0].spec.name)
 	test.isEqual("pl7.app/vdj/plateMap/row", s.axes[1].spec.name)
 	test.isEqual("pl7.app/vdj/plateMap/column", s.axes[2].spec.name)
@@ -80,4 +80,26 @@ TestThePlateMapIsKeyedByPlateRowAndColumn := func() {
 	test.isEqual("pl7.app/vdj/plateMap/verdict", verdict.name)
 	test.isTrue(!is_undefined(verdict.annotations["pl7.app/graph/palette"]), "the verdict has its colours")
 	test.isEqual("Double", s.columns[len(s.columns) - 1].spec.valueType)
+}
+
+hasColumnStartingWith := func(settings, prefix) {
+	for c in settings.columns {
+		if len(c.column) >= len(prefix) && c.column[:len(prefix)] == prefix {
+			return true
+		}
+	}
+	return false
+}
+
+// A heavy-only set carries no light columns at all, not empty ones.
+TestAHeavyOnlySetHasNoLightColumns := func() {
+	heavy := ["heavy"]
+	for s in [pairCols.settings(heavy), cloneCols.settings(undefined, heavy),
+		wellCols.settings(undefined, heavy)] {
+		test.isTrue(hasColumnStartingWith(s, "heavy_"))
+		test.isFalse(hasColumnStartingWith(s, "light_"))
+	}
+	plates := plateCols.settings(heavy)
+	test.isTrue(hasColumn(plates, "pl7.app/vdj/qc/heavyPassed"))
+	test.isFalse(hasColumn(plates, "pl7.app/vdj/qc/lightPassed"))
 }

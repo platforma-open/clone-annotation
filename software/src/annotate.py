@@ -215,6 +215,9 @@ def where(entry):
 MIXCR_FIELDS = {
     "id": "descrsR1",
     "chains": "topChains",
+    "vGene": "bestVGene",
+    "dGene": "bestDGene",
+    "jGene": "bestJGene",
     "vHit": "bestVHit",
     "dHit": "bestDHit",
     "jHit": "bestJHit",
@@ -451,7 +454,8 @@ def write_sequences(path, annotations, sequences, properties):
         ["sequenceKey", "plate", "well", "detectedChain", "chain", "qcReason", "pairStatus", "pairedWith", "chainMismatch",
          "source", "length", "meanQuality", "qualityScale", "mismatches", "extraReads",
          "note", "regionStatus", "observedChain", "frame", "productive", "stopRegion",
-         "mixedPositions", "vGene", "dGene", "jGene", "mixcrChains", "vAlignment"]
+         "mixedPositions", "vGene", "dGene", "jGene", "vHit", "dHit", "jHit",
+         "mixcrChains", "vAlignment"]
         + ["aa_%s" % f for f in FEATURES]
         + ["nt_%s" % f for f in FEATURES]
         + ["prop_%d" % i for i in range(len(names))]
@@ -479,7 +483,9 @@ def write_sequences(path, annotations, sequences, properties):
                  entry.get("frame", ""), entry.get("productive", ""),
                  entry.get("stopRegion", ""), entry.get("mixedPositions", ""),
                  entry.get("vGene", ""), entry.get("dGene", ""),
-                 entry.get("jGene", ""), entry.get("mixcrChains", ""),
+                 entry.get("jGene", ""), entry.get("vHit", ""),
+                 entry.get("dHit", ""), entry.get("jHit", ""),
+                 entry.get("mixcrChains", ""),
                  entry.get("vAlignment", "")]
                 + [amino.get(f, "") for f in FEATURES]
                 + [bases.get(f, "") for f in FEATURES]
@@ -494,7 +500,19 @@ SIDES = {"H": "heavy", "B": "heavy", "D": "heavy",
 
 # Mirrored on both sides of a clone. Identity stays unprefixed.
 PER_SIDE = ["chain", "fileChain", "source", "length", "meanQuality", "regionStatus",
-            "vGene", "dGene", "jGene"]
+            "vGene", "dGene", "jGene", "vHit", "dHit", "jHit"]
+
+
+def sides_found(annotations):
+    """The sides of a clone that any sequence in the set reads as.
+
+    The tables and the export carry columns only for these, so a heavy-only
+    plate has no light columns at all. Where nothing was numbered there is no
+    evidence either way, and both sides stay.
+    """
+    seen = {SIDES.get(e.get("observedChain", "")) for e in annotations}
+    found = [side for side in ("heavy", "light") if side in seen]
+    return found or ["heavy", "light"]
 
 
 def pair_columns():
@@ -517,6 +535,8 @@ def side_cells(entry, by_id):
         m.get("length", ""), m.get("meanQuality", ""),
         (entry or {}).get("status", ""), (entry or {}).get("vGene", ""),
         (entry or {}).get("dGene", ""), (entry or {}).get("jGene", ""),
+        (entry or {}).get("vHit", ""), (entry or {}).get("dHit", ""),
+        (entry or {}).get("jHit", ""),
     ]
     return cells + [amino.get(f, "") for f in FEATURES] + [bases.get(f, "") for f in FEATURES]
 
@@ -1042,6 +1062,8 @@ def main(argv=None):
                    help="One row per well of every plate, for the plate map")
     p.add_argument("--out_plates_tsv", required=False,
                    help="One row per plate: how its wells came out")
+    p.add_argument("--out_sides", required=False,
+                   help="The clone sides the set has sequences for, as a JSON list")
     p.add_argument("--peaks", required=False,
                    help="Each kept read's bases and mixed positions, as JSON")
     p.add_argument("--export", choices=sorted(EXPORT_VERDICTS), default="passed",
@@ -1113,8 +1135,10 @@ def main(argv=None):
         if hit is not None:
             # MiXCR writes "-" where it found no hit. An absent gene is absent,
             # not a gene called "-".
-            for field, name in (("vHit", "vGene"), ("dHit", "dGene"),
-                                ("jHit", "jGene"), ("chains", "mixcrChains"),
+            for field, name in (("vGene", "vGene"), ("dGene", "dGene"),
+                                ("jGene", "jGene"), ("vHit", "vHit"),
+                                ("dHit", "dHit"), ("jHit", "jHit"),
+                                ("chains", "mixcrChains"),
                                 ("vAlignment", "vAlignment")):
                 value = hit.get(field, "")
                 if value not in ("", "-"):
@@ -1153,6 +1177,10 @@ def main(argv=None):
     if args.out_wells_tsv:
         write_wells(args.out_wells_tsv, verdicts, annotations, sequences, properties)
 
+    sides = sides_found(annotations)
+    if args.out_sides:
+        pathlib.Path(args.out_sides).write_text(json.dumps(sides))
+
     pathlib.Path(args.out).write_text(
         json.dumps(
             {
@@ -1161,6 +1189,7 @@ def main(argv=None):
                 "notNumbered": not_numbered,
                 "notAligned": not_aligned,
                 "paired": pairing_applies(annotations, args.chains_declared),
+                "sides": sides,
                 "unpaired": unpaired,
                 "chainMismatch": mismatched,
                 "collapse": collapse,

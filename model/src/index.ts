@@ -154,6 +154,10 @@ export type Annotation = {
   vGene?: string;
   dGene?: string;
   jGene?: string;
+  /** The same genes with their allele, for example IGHV3-23*01. */
+  vHit?: string;
+  dHit?: string;
+  jHit?: string;
   /** The chain MiXCR called. Absent where no germline library covers the material. */
   mixcrChains?: string;
   vAlignment?: string;
@@ -212,6 +216,8 @@ export type AnnotationReport = {
   notAligned: string[];
   /** Whether the set holds pairs to make. A single-domain or one-chain set does not. */
   paired?: boolean;
+  /** The sides any sequence reads as. The tables carry columns only for these. */
+  sides?: ("heavy" | "light")[];
   /** Sequences held to no partner, rather than paired by guess. */
   unpaired: string[];
   /** Sequences whose file name asserts one chain and whose bases read as another. */
@@ -550,24 +556,9 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       .find((c) => c.getSpec().name === "pl7.app/vdj/qc/wells")
       ?.getSpec();
     if (anchor === undefined) return undefined;
-    // A set with nothing to pair has no light chain to count.
-    const paired = ctx.outputs
-      ?.resolve(ANNOTATION)
-      ?.getDataAsJsonOrUndefined<AnnotationReport>()?.paired;
     return createPlDataTableV3(ctx, {
       columns: { sources: [provider], anchors: { main: anchor }, selector: { maxHops: 0 } },
       tableState: ctx.data.plateTableState,
-      displayOptions:
-        paired === false
-          ? {
-              visibility: [
-                {
-                  match: { name: { type: "exact", value: "pl7.app/vdj/qc/lightPassed" } },
-                  visibility: "hidden",
-                },
-              ],
-            }
-          : undefined,
     });
   })
 
@@ -639,11 +630,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
 
   .title(() => "Clone Annotation")
 
-  .subtitle((ctx) => {
-    const n = ctx.data.traceFiles.length;
-    if (n === 0) return "No traces";
-    return n === 1 ? "1 trace" : `${n} traces`;
-  })
+  .subtitle((ctx) => ctx.data.name.trim() || DEFAULT_NAME)
 
   // Always offered, so a block that has not run yet shows where the results
   // will appear rather than hiding it.

@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import { reactive } from "vue";
+import { computed, reactive } from "vue";
 import type { FieldSummary } from "./selection_summary";
 
-defineProps<{ fields: FieldSummary[] }>();
+const props = defineProps<{ fields: FieldSummary[] }>();
+
+// Folded to one line by default: the counts are what tells a wrong part apart,
+// and the values themselves are there when someone wants to look.
+const summary = computed(() =>
+  props.fields.map((f) => `${f.label}: ${f.values.length}`).join(" · "),
+);
 
 const SHOWN = 12;
 const expanded = reactive(new Set<string>());
@@ -14,39 +20,59 @@ function toggle(label: string) {
 </script>
 
 <template>
-  <div :class="$style.fields" data-testid="field-values">
-    <template v-for="f in fields" :key="f.label">
-      <span :class="$style.label">{{ f.label }}</span>
-      <span :class="$style.values">
-        <span :class="$style.distinct">{{ f.values.length }} value(s)</span>
-        <span
-          v-for="v in expanded.has(f.label) ? f.values : f.values.slice(0, SHOWN)"
-          :key="v.value"
-          :class="[$style.chip, $style[f.kind]]"
-        >
-          {{ v.value === "" ? "(empty)" : v.value }}
-          <span :class="$style.count">{{ v.count }}</span>
+  <details :class="$style.details" data-testid="field-values">
+    <summary :class="$style.summary">
+      Values found <span :class="$style.counts">{{ summary }}</span>
+    </summary>
+    <div :class="$style.fields">
+      <template v-for="f in fields" :key="f.label">
+        <span :class="$style.label">{{ f.label }}</span>
+        <span :class="$style.values">
+          <span :class="$style.distinct">{{ f.values.length }} value(s)</span>
+          <span
+            v-for="v in expanded.has(f.label) ? f.values : f.values.slice(0, SHOWN)"
+            :key="v.value"
+            :class="[$style.chip, $style[f.kind]]"
+          >
+            {{ v.value === "" ? "(empty)" : v.value }}
+            <span :class="$style.count">{{ v.count }}</span>
+          </span>
+          <button
+            v-if="f.values.length > SHOWN"
+            type="button"
+            :class="$style.more"
+            @click="toggle(f.label)"
+          >
+            {{ expanded.has(f.label) ? "show less" : `and ${f.values.length - SHOWN} more` }}
+          </button>
         </span>
-        <button
-          v-if="f.values.length > SHOWN"
-          type="button"
-          :class="$style.more"
-          @click="toggle(f.label)"
-        >
-          {{ expanded.has(f.label) ? "show less" : `and ${f.values.length - SHOWN} more` }}
-        </button>
-      </span>
-    </template>
-  </div>
+      </template>
+    </div>
+  </details>
 </template>
 
 <style module>
+.details {
+  font-size: 12px;
+}
+
+.summary {
+  cursor: pointer;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.counts {
+  margin-left: 8px;
+  font-weight: 400;
+  color: var(--txt-03);
+}
+
 .fields {
   display: grid;
   grid-template-columns: max-content 1fr;
   gap: 6px 12px;
-  margin: 12px 0;
-  font-size: 12px;
+  margin-top: 6px;
 }
 
 .label {

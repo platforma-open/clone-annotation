@@ -41,7 +41,12 @@ col := func(column, valueType, label, extra) {
 	}
 }
 
-settings := func(properties) {
+// `sides` lists the sides the set has sequences for. Undefined means both.
+settings := func(properties, sides) {
+	if is_undefined(sides) {
+		sides = ["heavy", "light"]
+	}
+
 	columns := [
 		col("verdict", "String", "QC Verdict", {
 			"pl7.app/graph/palette": VERDICT_COLORS,
@@ -49,7 +54,7 @@ settings := func(properties) {
 		}),
 		col("reason", "String", "QC Reason", {})
 	]
-	for side in ["heavy", "light"] {
+	for side in sides {
 		title := side == "heavy" ? "Heavy" : "Light"
 		for f in SIDE_FIELDS {
 			columns = append(columns, col(side + "_" + f.field, f.type, title + " " + f.label, {}))

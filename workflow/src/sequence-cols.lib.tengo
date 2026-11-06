@@ -32,7 +32,8 @@ priority := func(column) {
 		mismatches: 860, extraReads: 850, note: 840,
 		regionStatus: 800, observedChain: 790, frame: 780,
 		productive: 775, stopRegion: 774, mixedPositions: 773,
-		vGene: 700, dGene: 690, jGene: 680, mixcrChains: 670, vAlignment: 660
+		vGene: 700, dGene: 690, jGene: 680,
+		vHit: 677, dHit: 676, jHit: 675, mixcrChains: 670, vAlignment: 660
 	}
 	if !is_undefined(order[column]) {
 		return order[column]
@@ -89,6 +90,9 @@ settings := func(properties) {
 		col("vGene", "String", "V Gene"),
 		col("dGene", "String", "D Gene"),
 		col("jGene", "String", "J Gene"),
+		col("vHit", "String", "V Hit with Allele"),
+		col("dHit", "String", "D Hit with Allele"),
+		col("jHit", "String", "J Hit with Allele"),
 		col("mixcrChains", "String", "MiXCR Chain"),
 		col("vAlignment", "String", "Departures from Germline")
 	]

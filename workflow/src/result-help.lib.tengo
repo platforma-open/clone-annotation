@@ -26,6 +26,9 @@ SEQUENCE := {
 	vGene: "The best germline gene MiXCR found. Empty when no germline reference matched.",
 	dGene: "The best germline gene MiXCR found. Empty when no germline reference matched.",
 	jGene: "The best germline gene MiXCR found. Empty when no germline reference matched.",
+	vHit: "The best germline gene MiXCR found, with its allele. Empty when no germline reference matched.",
+	dHit: "The best germline gene MiXCR found, with its allele. Empty when no germline reference matched.",
+	jHit: "The best germline gene MiXCR found, with its allele. Empty when no germline reference matched.",
 	mixcrChains: "The chain MiXCR aligned the sequence to.",
 	vAlignment: "Where the V region differs from its germline gene, as MiXCR reports it."
 }
