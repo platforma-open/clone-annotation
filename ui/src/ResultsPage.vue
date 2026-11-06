@@ -2,6 +2,7 @@
 import { SequenceViewerPluginModal } from "@milaboratories/sequence-viewer";
 import {
   createPlSelectionModel,
+  DEFAULT_QUALITY_THRESHOLD,
   type PlSelectionModel,
   type ResultsTab,
 } from "@platforma-open/milaboratories.clone-annotation.model";
@@ -44,6 +45,10 @@ const selectedCount = computed(() => cloneSelection.value.selectedKeys.length);
 // and the viewer on the exported one; the keys are the same variant keys, so only
 // the axis changes.
 const viewerOpen = ref(false);
+// The block's threshold, so the viewer marks the same bases low as the QC page does.
+const qualityThreshold = computed(
+  () => app.model.data.qualityThreshold ?? DEFAULT_QUALITY_THRESHOLD,
+);
 const viewerSelection = computed((): PlSelectionModel | undefined => {
   const axis = app.model.outputs.variantAxisSpec;
   if (axis === undefined || selectedCount.value === 0) return undefined;
@@ -77,6 +82,7 @@ const viewerSelection = computed((): PlSelectionModel | undefined => {
       v-model="viewerOpen"
       :handle="app.plugins.sequenceViewer.handle"
       :selection="viewerSelection"
+      :quality-threshold="qualityThreshold"
     />
   </PlBlockPage>
 </template>
