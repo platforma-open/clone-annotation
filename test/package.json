@@ -1,6 +1,6 @@
 {
   "name": "@platforma-open/milaboratories.clone-annotation.test",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Block tests",
   "type": "module",
