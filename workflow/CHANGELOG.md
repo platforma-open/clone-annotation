@@ -1,5 +1,13 @@
 # @platforma-open/milaboratories.clone-annotation.workflow
 
+## 1.0.2
+
+### Patch Changes
+
+- 4b10a8d: Initial software release
+- Updated dependencies [4b10a8d]
+  - @platforma-open/milaboratories.clone-annotation.software@1.0.2
+
 ## 1.0.1
 
 ### Patch Changes

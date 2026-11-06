@@ -1,6 +1,6 @@
 {
   "name": "@platforma-open/milaboratories.clone-annotation.kind",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "Block kind for the clone-annotation block",
   "type": "module",

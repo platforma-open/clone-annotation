@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.clone-annotation
 
+## 1.0.2
+
+### Patch Changes
+
+- 4b10a8d: Initial software release
+
 ## 1.0.1
 
 ### Patch Changes
