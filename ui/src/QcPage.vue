@@ -292,22 +292,7 @@ const sheetLists = computed(() =>
 }
 </style>
 
-<!-- GraphMaker has no prop to hide its editable title, so the map hides it here. The tabs
-     already say what the page shows. -->
 <style scoped>
-:deep(.graph-maker .chart_title),
-:deep(.graph-maker .chart_titleEdit) {
-  display: none;
-}
-
-:deep(.graph-maker .chart_header) {
-  margin-bottom: 0;
-}
-
-:deep(.graph-maker .chart_container) {
-  padding-top: 0;
-}
-
 /* The heatmap has no cell border setting. Its cells are the only rects that set
    fill-opacity, so a white stroke on them draws a gap between wells. */
 :deep(#chartSvgContainer rect[fill-opacity]) {

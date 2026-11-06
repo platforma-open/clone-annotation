@@ -376,37 +376,48 @@ function declaredFields(pattern: PathPattern | undefined) {
 const TRACE_REPORT = { field: "traceReport", allowPermanentAbsence: true } as const;
 const ANNOTATION = { field: "annotation", allowPermanentAbsence: true } as const;
 
-const dataModel = new DataModelBuilder({ kind }).from<BlockData>("v1").init(({ params }) => ({
-  name: DEFAULT_NAME,
-  traceFiles: [],
-  properties: [],
-  sequenceTableState: createPlDataTableStateV2(),
-  pairTableState: createPlDataTableStateV2(),
-  cloneTableState: createPlDataTableStateV2(),
-  plateTableState: createPlDataTableStateV2(),
-  readQualityGraph: histogram("Mean Quality per Read"),
-  readLengthGraph: histogram("Trimmed Length per Read"),
-  plateMapGraph: {
-    title: "Plate Map",
-    template: "heatmap",
-    currentTab: null,
-    // A well shows its own value: the heatmap's default z-scores each row and
-    // draws a missing value as 0, which reads as a measurement.
-    layersSettings: { heatmap: { NAValueAs: null, normalizationDirection: null } },
-    // Row letters and column numbers explain themselves. In "auto" mode the heatmap
-    // keeps 72px above the plot for a title even when it has none to show.
-    axesSettings: {
-      title: { mode: "hidden" },
-      axisX: { titleMode: "hidden", axisLabelsAngle: 0 },
-      axisY: { titleMode: "hidden" },
+const dataModel = new DataModelBuilder({ kind })
+  .from<BlockData>("v1")
+  // v1 -> v2: the plate map's title went from "Plate Map" to empty (see the default
+  // below). The page never lets it be edited, so every v1 block holds the old default.
+  .migrate<BlockData>("v2", (prev) => ({
+    ...prev,
+    plateMapGraph: { ...prev.plateMapGraph, title: "" },
+  }))
+  .init(({ params }) => ({
+    name: DEFAULT_NAME,
+    traceFiles: [],
+    properties: [],
+    sequenceTableState: createPlDataTableStateV2(),
+    pairTableState: createPlDataTableStateV2(),
+    cloneTableState: createPlDataTableStateV2(),
+    plateTableState: createPlDataTableStateV2(),
+    readQualityGraph: histogram("Mean Quality per Read"),
+    readLengthGraph: histogram("Trimmed Length per Read"),
+    plateMapGraph: {
+      // Empty, not hidden: the tab already names the map. Hiding graph-maker's title row
+      // instead moves its chart loader up while the overlay loader stays put, so the two
+      // draw as two offset charts during loading.
+      title: "",
+      template: "heatmap",
+      currentTab: null,
+      // A well shows its own value: the heatmap's default z-scores each row and
+      // draws a missing value as 0, which reads as a measurement.
+      layersSettings: { heatmap: { NAValueAs: null, normalizationDirection: null } },
+      // Row letters and column numbers explain themselves. In "auto" mode the heatmap
+      // keeps 72px above the plot for a title even when it has none to show.
+      axesSettings: {
+        title: { mode: "hidden" },
+        axisX: { titleMode: "hidden", axisLabelsAngle: 0 },
+        axisY: { titleMode: "hidden" },
+      },
     },
-  },
-  qualityThreshold: DEFAULT_QUALITY_THRESHOLD,
-  numberingScheme: "imgt",
-  species: "hsa",
-  exportWells: "passed",
-  ...(params ?? {}),
-}));
+    qualityThreshold: DEFAULT_QUALITY_THRESHOLD,
+    numberingScheme: "imgt",
+    species: "hsa",
+    exportWells: "passed",
+    ...(params ?? {}),
+  }));
 
 const sequenceViewer = sequenceViewerPlugin.create({ pluginId: "sequenceViewer" });
 
