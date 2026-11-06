@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@milaboratories/graph-maker": "catalog:",
-    "@milaboratories/sequence-viewer": "file:../../../core/visualizations/packages/sequence-viewer/package.tgz",
+    "@milaboratories/sequence-viewer": "catalog:",
     "@platforma-open/milaboratories.clone-annotation.model": "workspace:*",
     "@platforma-sdk/ui-vue": "catalog:",
     "ag-grid-enterprise": "catalog:",
