@@ -839,11 +839,12 @@ def chain_reasons(entry):
 def well_verdicts(annotations, sequences):
     """One verdict per well, from its worst chain.
 
-    A protocol fires every primer at every well, so a file whose read died
-    beside a well that did is a failed attempt, not a failed well. A chain that
-    did read and could not be numbered is different: it was sequenced, so the
-    well failed to describe it. A well with no germline passes: lacking a
-    reference is not a failed annotation (R31).
+    A file whose read died is a failed attempt, not a failed well. A chain that
+    read but numbered nothing means the well failed to describe it, unless the
+    same side is already held by a complete chain: a dual-primer protocol fires
+    both light primers at every well, so the empty light beside a clean pair is
+    another failed attempt. A well with no germline passes: lacking a reference
+    is not a failed annotation (R31).
     """
     by_id = {m["id"]: m for m in sequences}
     groups = {}
@@ -857,8 +858,14 @@ def well_verdicts(annotations, sequences):
         failed, warning = set(), set()
         if not read:
             failed.add("Low read quality")
-        elif any(not e.get("observedChain") for e in read):
-            failed.add("Annotation failed")
+        else:
+            for entry in read:
+                if entry.get("observedChain"):
+                    continue
+                side = SIDES.get(DECLARED_CLASS.get(entry["declaredChain"].strip().lower(), ""), "")
+                if not (side and chain_passed(members, side)):
+                    failed.add("Annotation failed")
+                    break
         for entry in described:
             f, c = chain_reasons(entry)
             failed |= f

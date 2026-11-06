@@ -750,6 +750,24 @@ def test_a_chain_that_read_but_was_not_numbered_is_not_described():
     check("the sequenced chain is named first", v["reasons"], ["Annotation failed", "Missing chain"])
 
 
+def test_an_unnumbered_read_on_a_covered_side_does_not_fail_the_well():
+    # Three files per well (heavy, kappa, lambda): the empty light that read but
+    # numbered nothing, beside a clean heavy+light pair, must not fail the well.
+    rows = [described("m0", "P1", "A1", "IGH", "H", pairStatus="Paired"),
+            described("m1", "P1", "A1", "IGL", "KL", pairStatus="Paired"),
+            sequence("m2", "P1", "A1", "IGK", "P1A1")]
+    rows[2].update({"status": "Failed", "pairStatus": "No sequence"})
+    v = verdicts_of(rows, {"m2": "forward"})[("P1", "A1")]
+    check("the redundant light does not fail a paired well", v["verdict"], "Passed")
+
+    # But an unnumbered read on a side nothing else covers still fails the well.
+    rows[0]["pairStatus"] = "Unpaired"
+    rows[1] = sequence("m1", "P1", "A1", "IGL", "P1A1")
+    rows[1].update({"status": "Failed", "pairStatus": "No sequence"})
+    v = verdicts_of(rows, {"m1": "forward", "m2": "forward"})[("P1", "A1")]
+    check("no light numbered, the well still fails", v["reason"], "Annotation failed")
+
+
 def test_incomplete_comes_before_a_stop_it_also_has():
     from annotate import chain_reasons
     entry = described("m0", "P1", "A1", "IGH", "H", domainComplete=False, stopRegion="FR3")
