@@ -1,4 +1,5 @@
 import type { GraphMakerState } from "@milaboratories/graph-maker";
+import { sequenceViewerPlugin } from "@milaboratories/sequence-viewer/plugin";
 import type {
   AxisId,
   ImportFileHandle,
@@ -7,6 +8,7 @@ import type {
   PFrameHandle,
   PlDataTableModel,
   PlDataTableStateV2,
+  PlSelectionModel,
   PTableKey,
   TreeNodeAccessor,
 } from "@platforma-sdk/model";
@@ -15,14 +17,15 @@ import {
   BlockModelV3,
   createPlDataTableStateV2,
   createPlDataTableV3,
+  createPlSelectionModel,
   DataModelBuilder,
   getFilePathFromHandle,
 } from "@platforma-sdk/model";
 
 // The UI depends on this package, not on the SDK directly, so what it needs from
 // the SDK travels through here.
-export type { AxisId, ImportFileHandle, PTableKey };
-export { getFilePathFromHandle };
+export type { AxisId, ImportFileHandle, PlSelectionModel, PTableKey };
+export { createPlSelectionModel, getFilePathFromHandle };
 export * from "./path_pattern";
 export type { Property, PropertyType } from "@platforma-open/milaboratories.clone-annotation.kind";
 import { normalizeWell, PathPattern, readEnd } from "./path_pattern";
@@ -405,7 +408,25 @@ const dataModel = new DataModelBuilder({ kind }).from<BlockData>("v1").init(({ p
   ...(params ?? {}),
 }));
 
+const sequenceViewer = sequenceViewerPlugin.create({ pluginId: "sequenceViewer" });
+
 export const platforma = BlockModelV3.create({ dataModel, kind })
+  /**
+   * The viewer reads the variants this block exports, from its own outputs, and nothing
+   * else: the result pool holds the same columns under other ids, and discovering them
+   * would put every clone in twice. The reads are one `.ab1` per variant and chain.
+   */
+  .plugin(sequenceViewer, {
+    anchorColumns: (ctx) =>
+      ctx.outputs
+        ?.resolve({ field: "variants", allowPermanentAbsence: true })
+        ?.getPColumns()
+        ?.filter((c) => c.spec.axesSpec.length === 1),
+    sources: () => [],
+    traceFiles: (ctx) =>
+      ctx.outputs?.resolve({ field: "traceFiles", allowPermanentAbsence: true })?.getPColumns(),
+  })
+
   // Each trace arrives with the path the pattern is matched against, computed
   // here so the path rule exists once rather than in both TypeScript and Tengo.
   .prerunArgs((data) => ({ propertyFile: data.propertyFile }))
@@ -611,6 +632,19 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     const col = readColumn(acc, PLATE_MAP_VERDICT);
     return col ? { columnId: col.id, spec: col.spec } : undefined;
   })
+
+  /**
+   * The axis the viewer's rows are keyed on. The clones table carries the same keys
+   * under its own axis, so its selection is re-keyed onto this one to open the viewer.
+   */
+  .output(
+    "variantAxisSpec",
+    (ctx) =>
+      ctx.outputs
+        ?.resolve({ field: "variants", allowPermanentAbsence: true })
+        ?.getPColumns()
+        ?.find((c) => c.spec.axesSpec.length === 1)?.spec.axesSpec[0],
+  )
 
   /** Regions from ANARCI and germline from MiXCR, joined onto each sequence. */
   .output("annotation", (ctx) =>

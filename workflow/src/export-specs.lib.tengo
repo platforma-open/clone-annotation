@@ -7,6 +7,7 @@
 // second frame. Only abundance carries the sample axis.
 
 maps := import("@platforma-sdk/workflow-tengo:maps")
+pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
 strings := import("@platforma-sdk/workflow-tengo:strings")
 
 CHAINS := ["IGHeavy", "IGLight"]
@@ -324,7 +325,42 @@ abundanceSettings := func(blockId) {
 	}
 }
 
+// The trace is what names the dataset everywhere downstream. Without it a
+// consumer falls back to the anchor column's own label, so the set shows up
+// called after whatever that column happens to be.
+//
+// makeTrace eats its first argument as the upstream trace and treats only the
+// rest as steps. This block has no upstream, so an empty map stands in;
+// passing the step alone silently produces an empty trace.
+datasetTrace := func(blockId, label) {
+	return pSpec.makeTrace({}, {
+		type: "milaboratories.clone-annotation",
+		id: blockId,
+		importance: 30,
+		label: label
+	})
+}
+
+// The `.ab1` read the sequence viewer shows for one chain of a variant. Hidden: it is a
+// file, not something a table or a chart can show.
+traceFileColumn := func(blockId, side) {
+	chain := side == "heavy" ? "IGHeavy" : "IGLight"
+	return {
+		kind: "PColumn",
+		name: "pl7.app/vdj/sequence/traceFile",
+		valueType: "File",
+		domain: maps.merge({ "pl7.app/fileExtension": "ab1" }, chainDomain(chain)),
+		axesSpec: [keyAxis(blockId).spec],
+		annotations: {
+			"pl7.app/label": LABEL[chain] + " Trace File",
+			"pl7.app/hideDataFromUi": "true"
+		}
+	}
+}
+
 export {
+	datasetTrace: datasetTrace,
+	traceFileColumn: traceFileColumn,
 	variantSettings: variantSettings,
 	abundanceSettings: abundanceSettings
 }

@@ -4,7 +4,6 @@
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 pframes := import("@platforma-sdk/workflow-tengo:pframes")
-pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
 xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
 pairCols := import(":pair-cols")
 cloneCols := import(":clone-cols")
@@ -32,22 +31,10 @@ self.body(func(inputs) {
 	sides := inputs.sides.getDataAsJson()
 	params := inputs.params
 
+	trace := exportSpecs.datasetTrace(params.blockId, params.label)
+
 	// What leaves the block. One frame, the record key on axis 0, and the plate
 	// carried only under abundance.
-	//
-	// The trace is what names the dataset everywhere downstream. Without it a
-	// consumer falls back to the anchor column's own label, so the set shows up
-	// called after whatever that column happens to be.
-	// makeTrace eats its first argument as the upstream trace and treats only
-	// the rest as steps. This block has no upstream, so an empty map stands in;
-	// passing the step alone silently produces an empty trace.
-	trace := pSpec.makeTrace({}, {
-		type: "milaboratories.clone-annotation",
-		id: params.blockId,
-		importance: 30,
-		label: params.label
-	})
-
 	toPool := pframes.pFrameBuilder()
 	for id, column in xsv.importFile(
 		inputs.clones, "tsv",

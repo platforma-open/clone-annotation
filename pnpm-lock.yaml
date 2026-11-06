@@ -173,6 +173,9 @@ catalogs:
     '@milaboratories/helpers':
       specifier: 1.14.6
       version: 1.14.6
+    '@milaboratories/sequence-viewer':
+      specifier: 0.1.0
+      version: 0.1.0
     '@milaboratories/ts-builder':
       specifier: 1.7.3
       version: 1.7.3
@@ -325,6 +328,9 @@ importers:
       '@milaboratories/helpers':
         specifier: 'catalog:'
         version: 1.14.6
+      '@milaboratories/sequence-viewer':
+        specifier: 'catalog:'
+        version: 0.1.0(@milaboratories/pl-model-common@1.50.0)(@platforma-sdk/model@1.87.0)(@platforma-sdk/ui-vue@1.87.0(@bytecodealliance/preview2-shim@0.30.0)(@vue/compiler-dom@3.5.44)(@vue/server-renderer@3.5.44)(typescript@5.9.3))(vue@3.5.44(typescript@5.9.3))
       '@platforma-open/milaboratories.clone-annotation.kind':
         specifier: workspace:*
         version: link:../kind
@@ -384,6 +390,9 @@ importers:
       '@milaboratories/graph-maker':
         specifier: 'catalog:'
         version: 1.9.0(@milaboratories/pl-model-common@1.50.0)(@platforma-sdk/model@1.87.0)(@platforma-sdk/ui-vue@1.87.0(@bytecodealliance/preview2-shim@0.30.0)(@vue/compiler-dom@3.5.44)(@vue/server-renderer@3.5.44)(typescript@5.9.3))(d3-dispatch@3.0.2)(d3-path@3.1.1)(d3-scale-chromatic@3.1.1)(supports-color@7.2.0)(typescript@5.9.3)
+      '@milaboratories/sequence-viewer':
+        specifier: 'catalog:'
+        version: 0.1.0(@milaboratories/pl-model-common@1.50.0)(@platforma-sdk/model@1.87.0)(@platforma-sdk/ui-vue@1.87.0(@bytecodealliance/preview2-shim@0.30.0)(@vue/compiler-dom@3.5.44)(@vue/server-renderer@3.5.44)(typescript@5.9.3))(vue@3.5.44(typescript@5.9.3))
       '@platforma-open/milaboratories.clone-annotation.model':
         specifier: workspace:*
         version: link:../model
@@ -1241,6 +1250,12 @@ packages:
       '@milaboratories/pl-model-common': 1.50.0
       '@platforma-sdk/model': 1.87.0
 
+  '@milaboratories/pf-plots@1.8.0':
+    resolution: {integrity: sha512-ZN3DJ4xVgNYGtoe02tw0EcZ+D38Fvk7+Sdvus9Lgmmp2Vfdjft35q227NVMqPwVNTsxN1gVKgNLQrkUuR8t0vw==}
+    peerDependencies:
+      '@milaboratories/pl-model-common': 1.50.0
+      '@platforma-sdk/model': 1.87.0
+
   '@milaboratories/pf-spec-driver@1.5.12':
     resolution: {integrity: sha512-8pOVEX/gmll4oPD0pHb6FJJa90f9nrDsTdbCxKNw4Ve7xA1mdPP45Z88Pr+Bb7gy6Hs9egf6ez/LYXdI/OGPfA==}
 
@@ -1336,6 +1351,13 @@ packages:
 
   '@milaboratories/resolve-helper@1.1.3':
     resolution: {integrity: sha512-38/dW/XRZQREOxAOOKtO0lzEWPCP/DH0qhB3q1kYcGoN++5V92/zbVwbYrMDeDcjTyo+D62iIep+sKXeWHa7Uw==}
+
+  '@milaboratories/sequence-viewer@0.1.0':
+    resolution: {integrity: sha512-5ACpl+N2Qzgoy2TMeDZPWy+yfAk+knP3VWbnxp+fHji+/KB+hN1uQvVMnbXxcn9hdXXzxHQg/qXSxRNcxs8I4A==}
+    peerDependencies:
+      '@platforma-sdk/model': 1.87.0
+      '@platforma-sdk/ui-vue': 1.87.0
+      vue: ^3.5.24
 
   '@milaboratories/software-pframes-conv@2.2.9':
     resolution: {integrity: sha512-w+GaazDSqEgqYUJ38I5lgOsggyZJpcBVGvDMHIX1pyTdvPjWAOWu3mLkScaYuWeitFfh8aAedf5vrLqXtnX8bw==}
@@ -7685,6 +7707,13 @@ snapshots:
       canonicalize: 2.1.0
       lodash: 4.18.1
 
+  '@milaboratories/pf-plots@1.8.0(@milaboratories/pl-model-common@1.50.0)(@platforma-sdk/model@1.87.0)':
+    dependencies:
+      '@milaboratories/pl-model-common': 1.50.0
+      '@platforma-sdk/model': 1.87.0
+      canonicalize: 2.1.0
+      lodash: 4.18.1
+
   '@milaboratories/pf-spec-driver@1.5.12(@bytecodealliance/preview2-shim@0.30.0)':
     dependencies:
       '@milaboratories/helpers': 1.14.6
@@ -7939,6 +7968,31 @@ snapshots:
       '@platforma-open/milaboratories.software-ptabler.schema': 1.15.30
 
   '@milaboratories/resolve-helper@1.1.3': {}
+
+  '@milaboratories/sequence-viewer@0.1.0(@milaboratories/pl-model-common@1.50.0)(@platforma-sdk/model@1.87.0)(@platforma-sdk/ui-vue@1.87.0(@bytecodealliance/preview2-shim@0.30.0)(@vue/compiler-dom@3.5.44)(@vue/server-renderer@3.5.44)(typescript@5.9.3))(vue@3.5.44(typescript@5.9.3))':
+    dependencies:
+      '@milaboratories/pf-plots': 1.8.0(@milaboratories/pl-model-common@1.50.0)(@platforma-sdk/model@1.87.0)
+      '@platforma-sdk/model': 1.87.0
+      '@platforma-sdk/ui-vue': 1.87.0(@bytecodealliance/preview2-shim@0.30.0)(@vue/compiler-dom@3.5.44)(@vue/server-renderer@3.5.44)(typescript@5.9.3)
+      '@vueuse/integrations': 13.9.0(sortablejs@1.15.7)(vue@3.5.44(typescript@5.9.3))
+      '@zip.js/zip.js': 2.24.0
+      d3-selection: 3.0.1
+      d3-zoom: 3.0.1
+      sortablejs: 1.15.7
+      vue: 3.5.44(typescript@5.9.3)
+    transitivePeerDependencies:
+      - '@milaboratories/pl-model-common'
+      - async-validator
+      - axios
+      - change-case
+      - drauu
+      - focus-trap
+      - fuse.js
+      - idb-keyval
+      - jwt-decode
+      - nprogress
+      - qrcode
+      - universal-cookie
 
   '@milaboratories/software-pframes-conv@2.2.9': {}
 

@@ -25,6 +25,7 @@
   "dependencies": {
     "@milaboratories/graph-maker": "catalog:",
     "@milaboratories/helpers": "catalog:",
+    "@milaboratories/sequence-viewer": "catalog:",
     "@platforma-open/milaboratories.clone-annotation.kind": "workspace:*",
     "@platforma-sdk/model": "catalog:"
   },
