@@ -132,6 +132,14 @@ def test_every_kept_read_the_sequence_did_not_use_becomes_a_candidate():
     check("nothing to offer", "alternatives" in alone, False)
 
 
+def test_the_consensus_cuts_each_read_where_trimming_did():
+    forward = {"trimmed": (42, 7)}
+    reverse = {"trimmed": (12, 0)}
+    check("per read, start then end",
+          driver.consensus_trims(forward, reverse),
+          ["-q", 42, "-u", 7, "-r", 12, "-s", 0])
+
+
 for name, fn in sorted(globals().items()):
     if name.startswith("test_"):
         fn()

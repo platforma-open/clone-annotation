@@ -149,6 +149,9 @@ def basecall_all(traces, calls, manifest, floor):
             "meanQuality": mean_quality(qual[start:end]),
             "kept": end - start >= MIN_USABLE,
             "qualitySource": "instrument" if instrument is not None else "tracy",
+            # Bases cut from the start and the end of Tracy's calls, which are
+            # also the calls tracy consensus aligns.
+            "trimmed": (start, len(qual) - end),
         }
         reads[trace_id] = read
         if not read["kept"]:
@@ -186,6 +189,18 @@ def count_mismatches(path):
         return None
     a, b = ["".join(r.splitlines()[1:]) for r in rows]
     return sum(1 for x, y in zip(a, b) if x != "-" and y != "-" and x != y)
+
+
+def consensus_trims(forward, reverse):
+    """Tracy's consensus options that cut each read where our trimming does.
+
+    Left alone, tracy consensus cuts a fixed 50 bases from both ends of both
+    reads. On a read that is good to its end, that drops good bases the
+    other read does not cover: with a constant-region reverse primer, the start
+    of FR1.
+    """
+    return ["-q", forward["trimmed"][0], "-u", forward["trimmed"][1],
+            "-r", reverse["trimmed"][0], "-s", reverse["trimmed"][1]]
 
 
 def single(read):
@@ -245,6 +260,7 @@ def merge(plan, traces, calls, reads):
         if len(ends) == 2:
             out = calls / seq_id
             reason = tracy("consensus", "-o", out,
+                           *consensus_trims(reads[ends["forward"]], reads[ends["reverse"]]),
                            traces / ends["forward"], traces / ends["reverse"])
             record = read_fastq(pathlib.Path(str(out) + ".fq")) if reason is None else None
             if record is not None:
