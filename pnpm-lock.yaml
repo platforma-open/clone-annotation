@@ -1347,7 +1347,7 @@ packages:
     resolution: {integrity: sha512-38/dW/XRZQREOxAOOKtO0lzEWPCP/DH0qhB3q1kYcGoN++5V92/zbVwbYrMDeDcjTyo+D62iIep+sKXeWHa7Uw==}
 
   '@milaboratories/sequence-viewer@file:../../core/visualizations/packages/sequence-viewer/package.tgz':
-    resolution: {integrity: sha512-l7obGnxJWsg94gqBGkbDVPXtPqlyOCmEHBL53/c0cjfcQ+1XpEa4EZH0wfJeMH2wrlf+bNoPp8kYigKKYAcNaw==, tarball: file:../../core/visualizations/packages/sequence-viewer/package.tgz}
+    resolution: {integrity: sha512-iMDiuBtDUc031cJmwbhsJAK9ac95TIAt7/pJNi/eKs+NdG4zErH0fTlDSg9N/zbYiAV4gGKoa8EXJUkFLpXKfA==, tarball: file:../../core/visualizations/packages/sequence-viewer/package.tgz}
     version: 0.0.0
     peerDependencies:
       '@platforma-sdk/model': 1.87.0
@@ -7962,6 +7962,7 @@ snapshots:
       '@platforma-sdk/model': 1.87.0
       '@platforma-sdk/ui-vue': 1.87.0(@bytecodealliance/preview2-shim@0.30.0)(@vue/compiler-dom@3.5.44)(@vue/server-renderer@3.5.44)(typescript@5.9.3)
       '@vueuse/integrations': 13.9.0(sortablejs@1.15.7)(vue@3.5.44(typescript@5.9.3))
+      '@zip.js/zip.js': 2.24.0
       d3-selection: 3.0.1
       d3-zoom: 3.0.1
       sortablejs: 1.15.7
