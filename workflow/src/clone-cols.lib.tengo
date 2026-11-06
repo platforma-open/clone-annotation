@@ -1,0 +1,138 @@
+help := import(":result-help")
+
+// The p-column shape of the clone table: one row per distinct antibody, with
+// every well it was seen in.
+
+FEATURES := ["VDJRegion", "FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"]
+SIDES := ["heavy", "light"]
+PER_SIDE := ["chain", "source", "length", "meanQuality", "regionStatus",
+	"vGene", "dGene", "jGene"]
+
+LABELS := {
+	chain: "Chain", fileChain: "Chain in File Name", source: "Source", length: "Length",
+	meanQuality: "Mean Quality", regionStatus: "Regions",
+	vGene: "V Gene", dGene: "D Gene", jGene: "J Gene"
+}
+
+TYPES := {
+	chain: "String", fileChain: "String", source: "String", length: "Long",
+	meanQuality: "Double", regionStatus: "String",
+	vGene: "String", dGene: "String", jGene: "String"
+}
+
+SHOWN := {
+	cloneId: true, wells: true,
+	heavy_chain: true, heavy_vGene: true, heavy_aa_CDR3: true,
+	light_chain: true, light_vGene: true, light_aa_CDR3: true
+}
+
+// A number can be summarised four ways and nothing in the data says which one
+// fits. All four are carried, and the scientist turns on the one that fits.
+SUMMARIES := ["min", "median", "max", "mean"]
+SUMMARY_LABEL := { min: "Min", median: "Median", max: "Max", mean: "Mean" }
+
+// The key is a hash. The Clone Id column is what a reader goes by.
+axisSpec := {
+	name: "pl7.app/vdj/cloneKey",
+	type: "String",
+	annotations: {
+		"pl7.app/label": "Clone",
+		"pl7.app/table/visibility": "hidden"
+	}
+}
+
+priority := func(column) {
+	order := {
+		cloneId: 1010, wells: 1000, pairStatus: 980, qcVerdict: 970, qcReason: 960,
+		heavy_chain: 910, heavy_vGene: 900, heavy_aa_CDR3: 880,
+		light_chain: 875, light_vGene: 870, light_aa_CDR3: 850,
+		// Last of all, after the property columns.
+		wellCount: 1
+	}
+	if !is_undefined(order[column]) {
+		return order[column]
+	}
+	return 500
+}
+
+col := func(column, valueType, label, shown) {
+	annotations := {
+		"pl7.app/label": label,
+		"pl7.app/table/visibility": shown ? "default" : "optional",
+		"pl7.app/table/orderPriority": string(priority(column))
+	}
+	description := help.describe(help.CLONE, column)
+	if !is_undefined(description) {
+		annotations["pl7.app/description"] = description
+	}
+	return {
+		column: column,
+		spec: {
+			valueType: valueType,
+			name: "pl7.app/vdj/clone/" + column,
+			annotations: annotations
+		}
+	}
+}
+
+// `sides` lists the sides the set has sequences for. Undefined means both.
+settings := func(properties, sides) {
+	if is_undefined(sides) {
+		sides = SIDES
+	}
+
+	columns := [
+		col("cloneId", "String", "Clone Id", true),
+		col("wells", "String", "Wells", true),
+		col("wellCount", "Long", "Number of Wells", false),
+		col("pairStatus", "String", "Pairing", false),
+		col("qcVerdict", "String", "QC Verdict", false),
+		col("qcReason", "String", "QC Reason", false)
+	]
+
+	for side in sides {
+		title := side == "heavy" ? "Heavy" : "Light"
+		for f in PER_SIDE {
+			name := side + "_" + f
+			columns = append(columns,
+				col(name, TYPES[f], title + " " + LABELS[f], SHOWN[name] == true))
+		}
+		for f in FEATURES {
+			name := side + "_aa_" + f
+			columns = append(columns,
+				col(name, "String", title + " " + f + " aa", SHOWN[name] == true))
+		}
+		for f in FEATURES {
+			columns = append(columns,
+				col(side + "_nt_" + f, "String", title + " " + f + " nt", false))
+		}
+	}
+
+	if !is_undefined(properties) {
+		for i, p in properties {
+			base := "prop_" + string(i)
+			// Every well's value, kept as it stands, beside the summary. R13
+			// asks for both, so neither has to be reconstructed from the other.
+			columns = append(columns,
+				col(base + "_values", "String", p.name + " (per Well)", true))
+			columns = append(columns,
+				col(base + "_disagrees", "String", p.name + " Disagrees", true))
+			for s in SUMMARIES {
+				columns = append(columns,
+					col(base + "_" + s, "Double", p.name + " " + SUMMARY_LABEL[s], false))
+			}
+		}
+	}
+
+	return {
+		axes: [{ column: "variantKey", spec: axisSpec }],
+		columns: columns,
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
+export {
+	axisSpec: axisSpec,
+	settings: settings
+}

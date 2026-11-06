@@ -1,0 +1,388 @@
+// A conda artifact has no root field, so the Tracy package cannot carry this
+// script. It is written into the working directory with writeFile().
+driverScript := `"""Read a plate's traces and merge each sequence, in one job.
+
+Tracy takes one file per basecall and one pair per consensus, so a plate is one
+subprocess per well. The point of running python as the entrypoint is that those
+runs share a single scheduled job.
+
+Usage: basecall_plate.py <traces-dir> <calls-dir> <manifest.json> <floor> <plan.json>
+"""
+
+import json
+import pathlib
+import struct
+import subprocess
+import sys
+
+# A usable stretch shorter than this holds no variable domain, so there is
+# nothing for annotation to describe. Not a knob: the scientist sets the quality
+# floor, and this only decides when the answer is "nothing left".
+MIN_USABLE = 100
+
+
+def tracy(*args):
+    """Run tracy. check=False on purpose: a truncated ABIF file aborts it with
+    exit 134 and an uncaught C++ exception, and one bad trace must not end the
+    plate."""
+    done = subprocess.run(["tracy", *[str(a) for a in args]],
+                          capture_output=True, text=True)
+    if done.returncode == 0:
+        return None
+    message = (done.stderr or done.stdout).strip().splitlines()
+    last = message[-1] if message else "Tracy exited %d" % done.returncode
+    return last[:1].upper() + last[1:]
+
+
+def read_fastq(path):
+    lines = path.read_text().splitlines() if path.exists() else []
+    return (lines[1], lines[3]) if len(lines) >= 4 else None
+
+
+def instrument_quality(path):
+    """The instrument's own per-base quality: entry PCON 2 of an ABIF file.
+
+    None for SCF, or for an ABIF without it. Tracy's quality is no substitute:
+    it scores each base against the worst part of the same read, so a read that
+    is noise from end to end still scores Q40-55.
+    """
+    try:
+        data = pathlib.Path(path).read_bytes()
+    except OSError:
+        return None
+    if len(data) < 34 or data[:4] != b"ABIF":
+        return None
+    count = struct.unpack(">i", data[18:22])[0]
+    offset = struct.unpack(">i", data[26:30])[0]
+    for i in range(count):
+        at = offset + 28 * i
+        if at + 28 > len(data):
+            return None
+        name, number, _, _, _, size, where, _ = struct.unpack(">4sihhiiii", data[at:at + 28])
+        if name == b"PCON" and number == 2:
+            # Four bytes or fewer are stored in the offset field itself.
+            raw = data[at + 20:at + 20 + size] if size <= 4 else data[where:where + size]
+            return list(raw)
+    return None
+
+
+def read_calls(path, instrument=None):
+    """Bases, qualities and mixed positions from tracy's per-scan table.
+
+    Only rows with a base number are calls; the rest are scan points between
+    peaks. Tracy fills the secondary call where a second peak reaches a third of
+    the main one, so a call whose secondary differs from its primary is mixed.
+    The bases are Tracy's. The quality is the instrument's at the same base
+    number where the file carries it, and Tracy's own only where it does not.
+    """
+    if not path.exists():
+        return None
+    lines = path.read_text().splitlines()
+    if len(lines) < 2:
+        return None
+    header = lines[0].split("\t")
+    at = {name: header.index(name) for name in ("basenum", "primary", "secondary", "qual")}
+    bases, qual, mixed = [], [], []
+    for line in lines[1:]:
+        row = line.split("\t")
+        if row[at["basenum"]] == "NA":
+            continue
+        if row[at["secondary"]] != row[at["primary"]]:
+            mixed.append(len(bases))
+        bases.append(row[at["primary"]])
+        if instrument is None:
+            q = int(row[at["qual"]])
+        else:
+            n = int(row[at["basenum"]]) - 1
+            q = instrument[n] if 0 <= n < len(instrument) else 0
+        qual.append(chr(min(q, 93) + 33))
+    return ("".join(bases), "".join(qual), mixed) if bases else None
+
+
+def mean_quality(qual):
+    return round(sum(ord(c) - 33 for c in qual) / len(qual), 1) if qual else 0.0
+
+
+def trim(quality, floor):
+    """Start and end of the stretch Mott's method keeps at this floor.
+
+    Each base adds (limit - its error probability), with the limit taken from
+    the floor: Q20 gives 0.01. The kept stretch is the one with the largest sum.
+    A single weak base inside a long good stretch costs about ten good bases
+    instead of cutting the read in two, which matters because the instrument
+    scores every base on its own.
+    """
+    limit = 10 ** (-floor / 10)
+    best = run = 0.0
+    best_start = best_end = start = 0
+    for i, q in enumerate(quality):
+        run += limit - 10 ** (-q / 10)
+        if run <= 0:
+            run, start = 0.0, i + 1
+        elif run > best:
+            best, best_start, best_end = run, start, i + 1
+    return best_start, best_end
+
+
+def basecall_all(traces, calls, manifest, floor):
+    reads, set_aside, peaks = {}, [], {}
+    for trace_id in sorted(manifest):
+        path = manifest[trace_id]["path"]
+        raw = calls / (trace_id + ".raw")
+        reason = tracy("basecall", "-f", "tsv", "-o", raw, traces / trace_id)
+        instrument = instrument_quality(traces / trace_id)
+        record = read_calls(raw, instrument) if reason is None else None
+        raw.unlink(missing_ok=True)
+        if record is None:
+            set_aside.append({"path": path, "plate": manifest[trace_id]["plate"],
+                              "reason": reason or "Tracy wrote no sequence"})
+            continue
+
+        sequence, qual, mixed = record
+        start, end = trim([ord(c) - 33 for c in qual], floor)
+        read = {
+            "id": trace_id,
+            "path": path,
+            "plate": manifest[trace_id]["plate"],
+            "length": len(qual),
+            "usableLength": end - start,
+            "meanQuality": mean_quality(qual[start:end]),
+            "kept": end - start >= MIN_USABLE,
+            "qualitySource": "instrument" if instrument is not None else "tracy",
+        }
+        reads[trace_id] = read
+        if not read["kept"]:
+            set_aside.append({
+                "path": path,
+                "plate": manifest[trace_id]["plate"],
+                "reason": "Trimming at Q%g leaves %d bases, %d needed" % (floor, end - start, MIN_USABLE),
+            })
+            continue
+        (calls / (trace_id + ".fastq")).write_text(
+            "@%s\n%s\n+\n%s\n" % (path, sequence[start:end], qual[start:end])
+        )
+        peaks[path] = {
+            "bases": sequence[start:end],
+            "mixed": [i - start for i in mixed if start <= i < end],
+        }
+    return reads, set_aside, peaks
+
+
+def tidy(calls, seq_id):
+    """tracy consensus writes .fa, .txt, .align.fa and two _1st/_2nd traces
+    beside the .fq, on a failed merge as well as a good one. Only the fastq
+    travels on."""
+    for leftover in calls.glob(seq_id + "*"):
+        if leftover.name != seq_id + ".fastq":
+            leftover.unlink()
+
+
+def count_mismatches(path):
+    """Columns where both reads are present and disagree."""
+    if not path.exists():
+        return None
+    rows = [r for r in path.read_text().split(">")[1:]]
+    if len(rows) != 2:
+        return None
+    a, b = ["".join(r.splitlines()[1:]) for r in rows]
+    return sum(1 for x, y in zip(a, b) if x != "-" and y != "-" and x != y)
+
+
+def single(read):
+    return {
+        "source": None,
+        "reads": [read["path"]],
+        "length": read["usableLength"],
+        "meanQuality": read["meanQuality"],
+        "qualityScale": "read",
+    }
+
+
+def add_alternatives(sequence, ends, reads, calls):
+    """Each kept read the sequence did not use, as a candidate of its own.
+
+    A merge can break a frame neither read had, and a fallback can pick the
+    worse read. Only numbering tells, and that happens later, so every candidate
+    goes on to ANARCI and annotate.py keeps the most complete domain.
+    """
+    alternatives = []
+    for end, trace_id in ends.items():
+        if sequence.get("source") == end:
+            continue
+        record = read_fastq(calls / (trace_id + ".fastq"))
+        if record is None:
+            continue
+        alt_id = "%s.%s" % (sequence["id"], end)
+        (calls / (alt_id + ".fastq")).write_text(
+            "@%s\n%s\n+\n%s\n" % (alt_id, record[0], record[1]))
+        alternatives.append(dict(single(reads[trace_id]), id=alt_id, source=end))
+    if alternatives:
+        sequence["alternatives"] = alternatives
+
+
+def merge(plan, traces, calls, reads):
+    """One sequence per plan entry. A sequence whose reads will not merge keeps
+    the better single read rather than disappearing."""
+    sequences = []
+    for index, entry in enumerate(plan):
+        seq_id = "s%05d" % index
+        ends = {}
+        for end in ("forward", "reverse"):
+            trace_id = entry.get(end)
+            if trace_id is not None and reads.get(trace_id, {}).get("kept"):
+                ends[end] = trace_id
+
+        sequence = {
+            "id": seq_id,
+            "plate": entry.get("plate", ""),
+            "well": entry.get("well", ""),
+            "chain": entry.get("chain", ""),
+            "pairKey": entry.get("pairKey", ""),
+            "extraReads": entry.get("extra", 0),
+        }
+
+        reason = "Only one read"
+        if len(ends) == 2:
+            out = calls / seq_id
+            reason = tracy("consensus", "-o", out,
+                           traces / ends["forward"], traces / ends["reverse"])
+            record = read_fastq(pathlib.Path(str(out) + ".fq")) if reason is None else None
+            if record is not None:
+                bases, qual = record
+                sequence.update({
+                    "source": "merged",
+                    "reads": [reads[t]["path"] for t in ends.values()],
+                    "length": len(bases),
+                    "meanQuality": mean_quality(qual),
+                    # Tracy recomputes quality for a consensus on its own scale,
+                    # which tops out near Q26. A single read carries the
+                    # instrument's, which reaches Q60. They do not compare.
+                    "qualityScale": "consensus",
+                    "mismatches": count_mismatches(pathlib.Path(str(out) + ".align.fa")),
+                })
+                sequences.append(sequence)
+                (calls / (seq_id + ".fastq")).write_text(
+                    "@%s\n%s\n+\n%s\n" % (seq_id, bases, qual))
+                tidy(calls, seq_id)
+                add_alternatives(sequence, ends, reads, calls)
+                continue
+            tidy(calls, seq_id)
+
+        if not ends:
+            sequence.update({"source": "none", "reads": [], "reason": "No read survived"})
+            sequences.append(sequence)
+            continue
+
+        end = max(ends, key=lambda e: reads[ends[e]]["usableLength"])
+        record = read_fastq(calls / (ends[end] + ".fastq"))
+        sequence.update(dict(single(reads[ends[end]]), source=end, reason=reason))
+        sequences.append(sequence)
+        if record is not None:
+            (calls / (seq_id + ".fastq")).write_text(
+                "@%s\n%s\n+\n%s\n" % (seq_id, record[0], record[1]))
+        add_alternatives(sequence, ends, reads, calls)
+    return sequences
+
+
+CODONS = {}
+_BASES = "TCAG"
+_AMINO = "FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG"
+for _i, _aa in enumerate(_AMINO):
+    CODONS[_BASES[_i // 16] + _BASES[_i // 4 % 4] + _BASES[_i % 4]] = _aa
+
+COMPLEMENT = str.maketrans("ACGTNacgtn", "TGCANtgcan")
+
+# A frame shorter than this cannot hold a variable domain, so it is not worth
+# an HMM scan.
+MIN_PROTEIN = 50
+
+
+def translate(nucleotide):
+    return "".join(
+        CODONS.get(nucleotide[i : i + 3].upper(), "X")
+        for i in range(0, len(nucleotide) - 2, 3)
+    )
+
+
+def write_fastas(sequences, calls, frames_out, sequences_out):
+    """The nucleotide for MiXCR, and all six proteins for ANARCI.
+
+    ANARCI reads protein and recognises a variable domain by its shape, so the
+    frame a sequence is actually in is the one it can number. Offering all six
+    is what finds the frame without a germline reference, and that is what keeps
+    regions working for material no reference library covers.
+    """
+    frames, nucleotides = [], []
+    candidates = []
+    for sequence in sequences:
+        candidates.append(sequence)
+        candidates.extend(sequence.get("alternatives", []))
+    for sequence in candidates:
+        record = read_fastq(calls / (sequence["id"] + ".fastq"))
+        if record is None:
+            continue
+        bases = record[0]
+        nucleotides.append(">%s\n%s\n" % (sequence["id"], bases))
+        reverse = bases.translate(COMPLEMENT)[::-1]
+        for frame in range(6):
+            protein = translate((bases if frame < 3 else reverse)[frame % 3 :])
+            if len(protein) >= MIN_PROTEIN:
+                frames.append(">%s|%d\n%s\n" % (sequence["id"], frame, protein))
+    frames_out.write_text("".join(frames))
+    sequences_out.write_text("".join(nucleotides))
+
+
+def main(argv):
+    traces = pathlib.Path(argv[1])
+    calls = pathlib.Path(argv[2])
+    manifest = json.loads(pathlib.Path(argv[3]).read_text())
+    floor = float(argv[4])
+    plan = json.loads(pathlib.Path(argv[5]).read_text())
+    calls.mkdir(parents=True, exist_ok=True)
+
+    reads, set_aside, peaks = basecall_all(traces, calls, manifest, floor)
+    sequences = merge(plan, traces, calls, reads)
+
+    for trace_id in reads:
+        (calls / (trace_id + ".fastq")).unlink(missing_ok=True)
+
+    write_fastas(sequences, calls, pathlib.Path("frames.fasta"),
+                 pathlib.Path("sequences.fasta"))
+
+    pathlib.Path("report.json").write_text(json.dumps({
+        "reads": sorted(reads.values(), key=lambda r: r["path"]),
+        "setAside": sorted(set_aside, key=lambda s: s["path"]),
+        "sequences": sequences,
+    }, indent=2))
+    # Kept apart from the report: it holds every read's bases, which is too
+    # much to inline into the model.
+    pathlib.Path("peaks.json").write_text(json.dumps(peaks, sort_keys=True))
+    # One row per read Tracy could call, for the read quality charts. A read
+    # the floor set aside stays in: it is the low tail the charts are for.
+    with open("reads.tsv", "w") as handle:
+        handle.write("readKey\tplate\tmeanQuality\tusableLength\n")
+        for trace_id in sorted(reads):
+            r = reads[trace_id]
+            handle.write("%s\t%s\t%s\t%d\n"
+                         % (trace_id, r["plate"], r["meanQuality"], r["usableLength"]))
+    # Always 0. A trace that failed is a result, not a broken job.
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
+`
+
+export {
+	driverScript: driverScript,
+	driverName: "basecall_plate.py",
+	tracesDir: "traces",
+	callsDir: "calls",
+	manifestName: "traces.json",
+	planName: "sequences.json",
+	reportName: "report.json",
+	peaksName: "peaks.json",
+	readsName: "reads.tsv",
+	framesName: "frames.fasta",
+	nucleotideName: "sequences.fasta"
+}

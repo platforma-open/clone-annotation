@@ -1,0 +1,218 @@
+test := import("@platforma-sdk/workflow-tengo:test")
+text := import("text")
+clones := import(":clones")
+
+// A trace as the model sends it. The name is underscore-separated parts, read as
+// {{Plate}}_{{Well}}, {{Plate}}_{{Chain}}_{{Well}} or
+// {{Plate}}_{{Chain}}_{{Direction}}_{{Well}} by how many there are. Any other
+// name did not match, so it carries no fields.
+// The model sends the direction as forward or reverse, whatever the name said.
+END_OF := { F: "forward", R: "reverse" }
+
+trace := func(path) {
+	t := { handle: path, path: path }
+	parts := text.split(text.trim_suffix(path, ".ab1"), "_")
+	if len(parts) == 2 {
+		t.fields = { plate: parts[0], well: parts[1], chain: "", direction: "" }
+	} else if len(parts) == 3 {
+		t.fields = { plate: parts[0], chain: parts[1], well: parts[2], direction: "" }
+	} else if len(parts) == 4 {
+		end := END_OF[parts[2]]
+		t.fields = { plate: parts[0], chain: parts[1], well: parts[3],
+			direction: is_undefined(end) ? parts[2] : end }
+	}
+	return t
+}
+
+TestOneWellWithTwoChainsIsOneClone := func() {
+	out := clones.group([trace("Plate1_IGH_A1.ab1"), trace("Plate1_IGL_A1.ab1")])
+	test.isEqual(1, len(out))
+	test.isEqual("Plate1", out[0].plate)
+	test.isEqual("A1", out[0].well)
+	test.isEqual(2, out[0].fileCount)
+	test.isEqual(1, out[0].chains["IGH"])
+	test.isEqual(1, out[0].chains["IGL"])
+}
+
+TestSameWellOnTwoPlatesIsTwoClones := func() {
+	out := clones.group([trace("Plate1_IGH_A1.ab1"), trace("Plate2_IGH_A1.ab1")])
+	test.isEqual(2, len(out))
+	test.isEqual("Plate1", out[0].plate)
+	test.isEqual("Plate2", out[1].plate)
+}
+
+TestClonesKeepFirstSeenOrder := func() {
+	out := clones.group([trace("Plate1_IGH_H12.ab1"), trace("Plate1_IGH_A1.ab1")])
+	test.isEqual("H12", out[0].well)
+	test.isEqual("A1", out[1].well)
+}
+
+TestAnUnmatchedTraceMakesNoClone := func() {
+	out := clones.group([trace("Plate1_IGH_A1.ab1"), trace("nonsense.txt")])
+	test.isEqual(1, len(out))
+	test.isEqual(1, out[0].fileCount)
+}
+
+TestWithoutFieldsNoTraceMakesAClone := func() {
+	test.isEqual(0, len(clones.group([trace("nonsense.txt")])))
+}
+
+TestNoTracesMeansNoClones := func() {
+	test.isEqual(0, len(clones.group([])))
+}
+
+TestUnmatchedReportsThePathsThePatternMissed := func() {
+	out := clones.unmatched([trace("Plate1_IGH_A1.ab1"), trace("nonsense.txt")])
+	test.isEqual(1, len(out))
+	test.isEqual("nonsense.txt", out[0])
+}
+
+TestEveryTraceWithoutFieldsIsUnmatched := func() {
+	out := clones.unmatched([trace("nonsense.txt"), trace("other.txt")])
+	test.isEqual(2, len(out))
+}
+
+key := func(plate, well) {
+	return plate + "\u0000" + well
+}
+
+elisa := func(pairs) {
+	return [{ name: "elisa", type: "Double", values: pairs }]
+}
+
+TestAttachPutsAValueOnItsClone := func() {
+	cs := clones.group([trace("Plate1_IGH_A1.ab1")])
+	vals := {}
+	vals[key("Plate1", "A1")] = "2.538"
+	out := clones.attach(cs, elisa(vals))
+	test.isEqual("2.538", out.clones[0].properties["elisa"])
+	test.isEqual(0, len(out.clonesWithout))
+}
+
+// Zero padding is the model's to remove: it normalises the well where it reads
+// the file name. What arrives here is already A1.
+TestAttachMatchesAcrossZeroPadding := func() {
+	cs := clones.group([trace("Plate1_IGH_A1.ab1")])
+	vals := {}
+	vals[key("Plate1", "A1")] = "2.538"
+	out := clones.attach(cs, elisa(vals))
+	test.isEqual("2.538", out.clones[0].properties["elisa"])
+}
+
+TestTheSameWellOnAnotherPlateIsNotTheSameClone := func() {
+	cs := clones.group([trace("Plate1_IGH_A1.ab1")])
+	vals := {}
+	vals[key("Plate2", "A1")] = "2.538"
+	out := clones.attach(cs, elisa(vals))
+	test.isEqual(true, is_undefined(out.clones[0].properties))
+	test.isEqual(1, len(out.clonesWithout))
+}
+
+TestACloneNoPropertyReachedIsReported := func() {
+	cs := clones.group([trace("Plate1_IGH_A1.ab1"), trace("Plate1_IGH_A2.ab1")])
+	vals := {}
+	vals[key("Plate1", "A1")] = "2.538"
+	out := clones.attach(cs, elisa(vals))
+	test.isEqual(1, len(out.clonesWithout))
+	test.isEqual("Plate1 A2", out.clonesWithout[0])
+}
+
+TestNoPropertiesLeavesEverythingAlone := func() {
+	cs := clones.group([trace("Plate1_IGH_A1.ab1")])
+	out := clones.attach(cs, [])
+	test.isEqual(true, is_undefined(out.clones[0].properties))
+	test.isEqual(0, len(out.clonesWithout))
+}
+
+TestASheetRowThatReachedNoTraceIsReported := func() {
+	cs := clones.group([trace("Plate1_IGH_A1.ab1")])
+	vals := {}
+	vals[key("Plate1", "A1")] = "2.538"
+	vals[key("Plate1", "B7")] = "0.081"
+	vals[key("Plate9", "A1")] = "1.004"
+	out := clones.attach(cs, elisa(vals))
+	test.isEqual(["Plate1 B7", "Plate9 A1"], out.valuesWithoutClone)
+}
+
+idTrace := func(id, path) {
+	t := trace(path)
+	t.id = id
+	return t
+}
+
+TestForwardAndReverseBecomeOneSequence := func() {
+	out := clones.sequences([
+		idTrace("t0", "Plate1_IGH_F_A1.ab1"),
+		idTrace("t1", "Plate1_IGH_R_A1.ab1")
+	])
+	test.isEqual(1, len(out))
+	test.isEqual("IGH", out[0].chain)
+	test.isEqual("t0", out[0].forward)
+	test.isEqual("t1", out[0].reverse)
+	test.isEqual(0, out[0].extra)
+}
+
+TestTwoChainsInOneWellAreTwoSequences := func() {
+	out := clones.sequences([
+		idTrace("t0", "Plate1_IGH_F_A1.ab1"),
+		idTrace("t1", "Plate1_IGL_F_A1.ab1")
+	])
+	test.isEqual(2, len(out))
+	test.isEqual("IGH", out[0].chain)
+	test.isEqual("IGL", out[1].chain)
+}
+
+TestASequenceWithOnlyAReverseReadKeepsIt := func() {
+	out := clones.sequences([idTrace("t0", "Plate1_IGH_R_A1.ab1")])
+	test.isEqual(1, len(out))
+	test.isTrue(is_undefined(out[0].forward))
+	test.isEqual("t0", out[0].reverse)
+}
+
+TestASecondReadOfTheSameEndIsCountedNotUsed := func() {
+	out := clones.sequences([
+		idTrace("t0", "Plate1_IGH_F_A1.ab1"),
+		idTrace("t1", "Plate1_IGH_F_A1.ab1")
+	])
+	test.isEqual(1, len(out))
+	test.isEqual("t0", out[0].forward)
+	test.isEqual(1, out[0].extra)
+}
+
+TestWithoutADirectionGroupTheFirstReadStandsAlone := func() {
+	out := clones.sequences([
+		idTrace("t0", "Plate1_IGH_A1.ab1"),
+		idTrace("t1", "Plate1_IGL_A1.ab1")
+	])
+	test.isEqual(2, len(out))
+	test.isEqual("t0", out[0].forward)
+	test.isTrue(is_undefined(out[0].reverse))
+}
+
+TestReadEndTakesOnlyTheTwoEnds := func() {
+	test.isEqual("forward", clones.readEnd("forward"))
+	test.isEqual("reverse", clones.readEnd("reverse"))
+	test.isEqual("", clones.readEnd("inner"))
+}
+
+TestPairKeyOnPlateAndWellHoldsBothChains := func() {
+	out := clones.sequences([
+		idTrace("t0", "Plate1_IGH_F_A1.ab1"),
+		idTrace("t1", "Plate1_IGL_F_A1.ab1")
+	])
+	test.isEqual(2, len(out))
+	test.isEqual(out[0].pairKey, out[1].pairKey)
+}
+
+TestPairKeyOnPlateAndWellSeparatesWells := func() {
+	out := clones.sequences([
+		idTrace("t0", "Plate1_IGH_F_A1.ab1"),
+		idTrace("t1", "Plate1_IGH_F_A2.ab1")
+	])
+	test.isTrue(out[0].pairKey != out[1].pairKey)
+}
+
+
+
+
+

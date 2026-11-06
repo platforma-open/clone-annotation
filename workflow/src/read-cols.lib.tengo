@@ -1,0 +1,70 @@
+// The p-column shape of the read quality charts: one row per read Tracy could
+// call, before any merge. Merged sequences stay out: their quality is on the
+// consensus scale, which tops out near Q26, so beside single reads it misleads.
+
+// The Tracy driver keeps a read with at least this many bases after trimming.
+MIN_USABLE_LENGTH := 100
+
+// GraphMaker draws each entry as a dashed line on the histogram of the column.
+// Written by hand rather than with json.encode, whose key order is not fixed,
+// so the spec stays the same from run to run.
+thresholds := func(value, label) {
+	return "[{\"value\":" + string(value) + ",\"label\":\"" + label + "\"}]"
+}
+
+axisSpec := {
+	name: "pl7.app/vdj/qc/readKey",
+	type: "String",
+	annotations: { "pl7.app/label": "Read" }
+}
+
+// `threshold` is the quality threshold the reads were trimmed at.
+settings := func(threshold) {
+	return {
+		axes: [{ column: "readKey", spec: axisSpec }],
+		columns: [
+			{
+				column: "plate",
+				spec: {
+					valueType: "String",
+					name: "pl7.app/vdj/qc/read/plate",
+					annotations: {
+						"pl7.app/label": "Plate",
+						"pl7.app/description": "The plate the file name places the read on. Unplaced: the name pattern did not match the file."
+					}
+				}
+			},
+			{
+				column: "meanQuality",
+				spec: {
+					valueType: "Double",
+					name: "pl7.app/vdj/qc/read/meanQuality",
+					annotations: {
+						"pl7.app/label": "Mean Quality (Phred)",
+						"pl7.app/description": "Mean Phred quality of the trimmed read. Sequencing providers call this the trace score.",
+						"pl7.app/graph/thresholds": thresholds(threshold, "Quality threshold")
+					}
+				}
+			},
+			{
+				column: "usableLength",
+				spec: {
+					valueType: "Long",
+					name: "pl7.app/vdj/qc/read/usableLength",
+					annotations: {
+						"pl7.app/label": "Trimmed Length (Bases)",
+						"pl7.app/description": "Bases kept after trimming at the quality threshold. A single weak base inside a good stretch does not cut the read. Close to the contiguous read length (CRL) that providers report.",
+						"pl7.app/graph/thresholds": thresholds(MIN_USABLE_LENGTH, "Minimum length")
+					}
+				}
+			}
+		],
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
+export {
+	axisSpec: axisSpec,
+	settings: settings
+}

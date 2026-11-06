@@ -1,0 +1,23 @@
+// The properties sheet is imported here, not in the main run, because the UI has
+// to read its bytes to offer the columns for mapping. Traces are not imported
+// here: they would start uploading the moment they were picked.
+
+wf := import("@platforma-sdk/workflow-tengo:workflow")
+file := import("@platforma-sdk/workflow-tengo:file")
+
+wf.body(func(args) {
+	outputs := {}
+
+	if !is_undefined(args.propertyFile) {
+		imp := file.importFile(args.propertyFile)
+		imports := {}
+		imports[args.propertyFile] = imp.handle
+		outputs.propertyFileImports = imports
+		outputs.propertyFile = file.exportFile(imp.file)
+	}
+
+	return {
+		outputs: outputs,
+		exports: {}
+	}
+})

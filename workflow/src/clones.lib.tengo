@@ -1,0 +1,219 @@
+text := import("text")
+
+// A clone is one well of one plate: the same well number recurs on every plate,
+// so neither alone identifies it.
+// Must match the UI's key exactly, since properties arrive keyed by it.
+cloneKey := func(plate, well) {
+	return plate + "\u0000" + well
+}
+
+// Groups traces into the clones they came from, in first-seen order.
+//
+// `traces` carry the `fields` the model matched out of each path: plate, well,
+// chain and direction, each "" where the pattern has none. A trace with no
+// `fields` did not match and contributes no clone — it is reported separately.
+group := func(traces) {
+	if is_undefined(traces) || len(traces) == 0 {
+		return []
+	}
+
+	byKey := {}
+	order := []
+
+	for t in traces {
+		f := t.fields
+		if is_undefined(f) {
+			continue
+		}
+
+		key := cloneKey(f.plate, f.well)
+
+		clone := byKey[key]
+		if is_undefined(clone) {
+			clone = { plate: f.plate, well: f.well, chains: {}, fileCount: 0 }
+			byKey[key] = clone
+			order = append(order, key)
+		}
+		clone.chains[f.chain] = (is_undefined(clone.chains[f.chain]) ? 0 : clone.chains[f.chain]) + 1
+		clone.fileCount = clone.fileCount + 1
+	}
+
+	clones := []
+	for key in order {
+		clones = append(clones, byKey[key])
+	}
+	return clones
+}
+
+// The traces the pattern did not match. They are carried rather than dropped: a
+// file nobody can place is a result, not an absence.
+unmatched := func(traces) {
+	if is_undefined(traces) || len(traces) == 0 {
+		return []
+	}
+
+	out := []
+	for t in traces {
+		if is_undefined(t.fields) {
+			out = append(out, t.path)
+		}
+	}
+	return out
+}
+
+sortStrings := func(items) {
+	out := copy(items)
+	for i := 1; i < len(out); i++ {
+		v := out[i]
+		j := i - 1
+		for j >= 0 && out[j] > v {
+			out[j + 1] = out[j]
+			j--
+		}
+		out[j + 1] = v
+	}
+	return out
+}
+
+// Attaches the mapped properties to the clones they belong to.
+//
+// A property arrives as a column of values keyed on plate and well, already
+// mapped and typed in the UI. Every value is carried as it stands, under the
+// name it arrived with; nothing is summarised, because a clone's wells are
+// not collapsed until later.
+//
+// A clone no property reached is reported rather than given a value. An absent
+// reading and a poor one are different results and must not share a cell.
+attach := func(clones, properties) {
+	if is_undefined(properties) || len(properties) == 0 {
+		return { clones: clones, clonesWithout: [], valuesWithoutClone: [] }
+	}
+
+	clonesWithout := []
+	reached := {}
+	for c in clones {
+		// The model hands every well over normalised, as the sheet's are.
+		key := cloneKey(c.plate, c.well)
+		got := false
+		for p in properties {
+			v := p.values[key]
+			if !is_undefined(v) {
+				if is_undefined(c.properties) {
+					c.properties = {}
+				}
+				c.properties[p.name] = v
+				got = true
+			}
+		}
+		if got {
+			reached[key] = true
+		} else {
+			clonesWithout = append(clonesWithout, c.plate + " " + c.well)
+		}
+	}
+
+	// A sheet row that landed on no trace is a result too: usually a well the
+	// scientist measured but never sequenced, or a plate named two ways.
+	valuesWithoutClone := []
+	seen := {}
+	for p in properties {
+		for key, _ in p.values {
+			if is_undefined(reached[key]) && is_undefined(seen[key]) {
+				seen[key] = true
+				parts := text.split(key, "\u0000")
+				valuesWithoutClone = append(valuesWithoutClone, text.trim_space(parts[0] + " " + parts[1]))
+			}
+		}
+	}
+
+	// Map iteration has no order in Tengo, so the list is sorted to keep the run
+	// reproducible.
+	return {
+		clones: clones,
+		clonesWithout: clonesWithout,
+		valuesWithoutClone: sortStrings(valuesWithoutClone)
+	}
+}
+
+
+// Which end of the sequence a read is. The model has already turned every
+// spelling into forward or reverse; anything else is a read whose direction
+// the set does not state, and such a read stands alone.
+readEnd := func(direction) {
+	if direction == "forward" || direction == "reverse" {
+		return direction
+	}
+	return ""
+}
+
+
+// The merge plan: one sequence per plate, well and chain, naming the reads that
+// should become it, and the key that will pair it with the other chain.
+//
+// Traces must carry `id` as well as `path` and `fields`; the ids are what the driver stages
+// the files under. A second trace claiming an end another already holds is
+// counted rather than used, because nothing here can say which of the two the
+// scientist meant.
+sequences := func(traces) {
+	if is_undefined(traces) || len(traces) == 0 {
+		return []
+	}
+
+	byKey := {}
+	order := []
+
+	for t in traces {
+		f := t.fields
+		if is_undefined(f) {
+			continue
+		}
+
+		plate := f.plate
+		well := f.well
+		chain := f.chain
+		key := plate + "\u0000" + well + "\u0000" + chain
+
+		mol := byKey[key]
+		if is_undefined(mol) {
+			mol = {
+				plate: plate,
+				well: well,
+				chain: chain,
+				extra: 0,
+				// The two chains of a clone share a plate and a well. A set filed
+				// one directory per chain pairs once the pattern reads the real
+				// plate out of the folder, with an optional `[_a|_b]` section.
+				pairKey: plate + "\u0000" + well
+			}
+			byKey[key] = mol
+			order = append(order, key)
+		}
+
+		end := readEnd(f.direction)
+		if end == "forward" && is_undefined(mol.forward) {
+			mol.forward = t.id
+		} else if end == "reverse" && is_undefined(mol.reverse) {
+			mol.reverse = t.id
+		} else if end == "" && is_undefined(mol.forward) && is_undefined(mol.reverse) {
+			// No direction in the pattern, or a value neither end claims. The
+			// read still makes a sequence; it just cannot be paired.
+			mol.forward = t.id
+		} else {
+			mol.extra = mol.extra + 1
+		}
+	}
+
+	out := []
+	for key in order {
+		out = append(out, byKey[key])
+	}
+	return out
+}
+
+export {
+	group: group,
+	sequences: sequences,
+	readEnd: readEnd,
+	unmatched: unmatched,
+	attach: attach
+}

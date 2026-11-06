@@ -1,0 +1,16 @@
+.test_auth.json
+node_modules/
+dist/
+block-pack/
+dev/
+work/
+log/
+.turbo
+vite.config.*.timestamp-*
+software/**/*.tgz
+.DS_Store
+.vscode/sftp.json
+test-dry-run.json
+.idea/
+
+__pycache__/
