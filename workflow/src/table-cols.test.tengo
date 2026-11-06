@@ -1,3 +1,4 @@
+json := import("json")
 test := import("@platforma-sdk/workflow-tengo:test")
 sequenceCols := import(":sequence-cols")
 pairCols := import(":pair-cols")
@@ -22,9 +23,9 @@ TestEachTableCarriesTheColumnTheModelAnchorsOn := func() {
 	test.isTrue(hasColumn(pairCols.settings(undefined), "pl7.app/vdj/pair/well"))
 	test.isTrue(hasColumn(cloneCols.settings(undefined, undefined), "pl7.app/vdj/clone/wellCount"))
 	test.isTrue(hasColumn(plateCols.settings(undefined), "pl7.app/vdj/qc/wells"))
-	test.isTrue(hasColumn(readCols.settings(), "pl7.app/vdj/qc/read/meanQuality"))
-	test.isTrue(hasColumn(readCols.settings(), "pl7.app/vdj/qc/read/usableLength"))
-	test.isTrue(hasColumn(readCols.settings(), "pl7.app/vdj/qc/read/plate"))
+	test.isTrue(hasColumn(readCols.settings(20), "pl7.app/vdj/qc/read/meanQuality"))
+	test.isTrue(hasColumn(readCols.settings(20), "pl7.app/vdj/qc/read/usableLength"))
+	test.isTrue(hasColumn(readCols.settings(20), "pl7.app/vdj/qc/read/plate"))
 }
 
 TestTheTablesDoNotShareAnAxis := func() {
@@ -102,4 +103,18 @@ TestAHeavyOnlySetHasNoLightColumns := func() {
 	plates := plateCols.settings(heavy)
 	test.isTrue(hasColumn(plates, "pl7.app/vdj/qc/heavyPassed"))
 	test.isFalse(hasColumn(plates, "pl7.app/vdj/qc/lightPassed"))
+}
+
+TestTheReadChartsDrawTheirThresholds := func() {
+	lines := {}
+	for c in readCols.settings(15).columns {
+		annotation := c.spec.annotations["pl7.app/graph/thresholds"]
+		if !is_undefined(annotation) {
+			lines[c.column] = json.decode(annotation)
+		}
+	}
+	test.isEqual(15, lines.meanQuality[0].value)
+	test.isEqual("Quality threshold", lines.meanQuality[0].label)
+	test.isEqual(100, lines.usableLength[0].value)
+	test.isEqual("Minimum length", lines.usableLength[0].label)
 }

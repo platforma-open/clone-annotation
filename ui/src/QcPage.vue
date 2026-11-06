@@ -157,20 +157,25 @@ const sheetLists = computed(() =>
       :status-text="plateMapNotRun"
     />
 
-    <PlDialogModal v-model="reasonsOpen" width="560px" close-on-outside-click>
+    <!-- The title already ends in 24px of padding, so the content adds none on top. -->
+    <PlDialogModal v-model="reasonsOpen" width="560px" no-top-content-gutter close-on-outside-click>
       <template #title>QC Reasons</template>
-      <p :class="$style.note">
-        Each well takes the first reason any of its chains has, in the order below.
-      </p>
-      <section v-for="group in reasonGroups" :key="group.verdict" :class="$style.sheetList">
-        <h3 :class="$style.heading">{{ group.verdict }}</h3>
-        <dl :class="$style.help">
-          <template v-for="r in group.reasons" :key="r.label">
-            <dt>{{ r.label }}</dt>
-            <dd>{{ r.help }}</dd>
-          </template>
-        </dl>
-      </section>
+      <div :class="$style.reasons">
+        <p :class="$style.note">
+          Each well takes the first reason any of its chains has, in the order below.
+        </p>
+        <div :class="$style.groups">
+          <section v-for="group in reasonGroups" :key="group.verdict" :class="$style.sheetList">
+            <h3 :class="$style.heading">{{ group.verdict }}</h3>
+            <dl :class="$style.help">
+              <template v-for="r in group.reasons" :key="r.label">
+                <dt>{{ r.label }}</dt>
+                <dd>{{ r.help }}</dd>
+              </template>
+            </dl>
+          </section>
+        </div>
+      </div>
     </PlDialogModal>
 
     <PlDialogModal v-model="statsOpen" width="448px" close-on-outside-click>
@@ -215,8 +220,10 @@ const sheetLists = computed(() =>
   font-weight: 600;
 }
 
+/* The dialog already puts 24px between its children, so the blocks inside
+   carry no margin of their own. */
 .note {
-  margin: 12px 0 0;
+  margin: 0;
   font-size: 12px;
   color: var(--txt-03);
 }
@@ -232,11 +239,24 @@ const sheetLists = computed(() =>
   border-bottom: 1px solid var(--border-color-div-grey);
 }
 
+/* The note belongs to the lists below it, so it sits closer to them than the
+   lists sit to each other. */
+.reasons {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
 .sheetList {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-top: 24px;
 }
 
 .value {
@@ -250,7 +270,11 @@ const sheetLists = computed(() =>
 
 .help dt {
   font-weight: 600;
-  margin-top: 8px;
+  margin-top: 12px;
+}
+
+.help dt:first-child {
+  margin-top: 0;
 }
 
 .help dd {

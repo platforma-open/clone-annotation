@@ -110,7 +110,7 @@ wf.body(func(args) {
 		readsBuilder := pframes.pFrameBuilder()
 		for id, column in xsv.importFile(
 			result.getFile(tracy.readsName), "tsv",
-			readCols.settings(), { splitDataAndSpec: true }
+			readCols.settings(threshold), { splitDataAndSpec: true }
 		) {
 			readsBuilder.add(id, column.spec, column.data)
 		}

@@ -34,8 +34,10 @@ const tab = computed({
   <PlBlockPage>
     <template #title>Results</template>
 
-    <!-- A row of its own: the table pins Filters, Columns and Export to the title line. -->
-    <PlTabs v-model="tab" :options="tabs" />
+    <template #append>
+      <!-- After the table's own controls (Filters, Columns), as in Plate View. -->
+      <PlTabs v-model="tab" :class="$style.tabs" :options="tabs" :top-line="false" />
+    </template>
 
     <div :class="$style.body">
       <ClonesTable v-if="tab === 'clones'" />
@@ -46,6 +48,12 @@ const tab = computed({
 </template>
 
 <style module>
+/* The table's last button has 12px padding at its edge. The tabs have none at
+   their underline, so they get the other 12px here. */
+.tabs {
+  margin-left: 12px;
+}
+
 .body {
   flex: 1;
   min-height: 300px;
