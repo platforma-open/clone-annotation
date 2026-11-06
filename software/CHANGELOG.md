@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.clone-annotation.software
 
+## 1.0.3
+
+### Patch Changes
+
+- 2a5612c: Sequence viewer over the clones: opens the selected clones' Sanger traces from the Clones tab
+
 ## 1.0.2
 
 ### Patch Changes
