@@ -2,6 +2,7 @@
 import { SequenceViewerPluginModal } from "@milaboratories/sequence-viewer";
 import {
   createPlSelectionModel,
+  DEFAULT_QUALITY_THRESHOLD,
   type PlSelectionModel,
   type ResultsTab,
 } from "@platforma-open/milaboratories.clone-annotation.model";
@@ -39,11 +40,15 @@ const tab = computed({
 const cloneSelection = ref<PlSelectionModel>(createPlSelectionModel());
 const selectedCount = computed(() => cloneSelection.value.selectedKeys.length);
 
-// The selected clones as stacked tracks with their reads; every clone, up to the
-// viewer's limit, when none is selected. The clones table is keyed on its own axis
-// and the viewer on the exported one; the keys are the same variant keys, so only
-// the axis changes.
+// The selected clones as stacked tracks with their reads. It opens only over a
+// selection: given none, the viewer would load every clone up to its limit, reads
+// and all. The clones table is keyed on its own axis and the viewer on the exported
+// one; the keys are the same variant keys, so only the axis changes.
 const viewerOpen = ref(false);
+// The block's threshold, so the viewer marks the same bases low as the QC page does.
+const qualityThreshold = computed(
+  () => app.model.data.qualityThreshold ?? DEFAULT_QUALITY_THRESHOLD,
+);
 const viewerSelection = computed((): PlSelectionModel | undefined => {
   const axis = app.model.outputs.variantAxisSpec;
   if (axis === undefined || selectedCount.value === 0) return undefined;
@@ -57,7 +62,7 @@ const viewerSelection = computed((): PlSelectionModel | undefined => {
     <template #append>
       <PlBtnGhost
         v-if="tab === 'clones'"
-        :disabled="!app.model.outputs.variantAxisSpec"
+        :disabled="!viewerSelection"
         @click.stop="viewerOpen = true"
       >
         Sequence viewer{{ selectedCount ? ` (${selectedCount})` : "" }}
@@ -77,6 +82,7 @@ const viewerSelection = computed((): PlSelectionModel | undefined => {
       v-model="viewerOpen"
       :handle="app.plugins.sequenceViewer.handle"
       :selection="viewerSelection"
+      :quality-threshold="qualityThreshold"
     />
   </PlBlockPage>
 </template>
