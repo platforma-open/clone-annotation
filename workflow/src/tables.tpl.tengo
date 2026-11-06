@@ -1,0 +1,74 @@
+// The tables and the export whose columns depend on the chains the set turned
+// out to hold. They wait for annotate.py's list of sides, so a heavy-only plate
+// gets no light chain columns at all, in the block or downstream.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
+pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
+xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
+pairCols := import(":pair-cols")
+cloneCols := import(":clone-cols")
+plateCols := import(":plate-cols")
+wellCols := import(":well-cols")
+exportSpecs := import(":export-specs")
+
+self.defineOutputs("pairsTable", "clonesTable", "plateSummaryTable", "plateMap", "variants")
+
+self.awaitState("InputsLocked")
+self.awaitState("sides", "ResourceReady")
+self.awaitState("params", "ResourceReady")
+
+// `splitDataAndSpec` hands back a map of {spec, data} pairs. The frame builder
+// is what turns those into the `<id>.spec` / `<id>.data` fields a frame is made of.
+importFrame := func(tsv, settings) {
+	builder := pframes.pFrameBuilder()
+	for id, column in xsv.importFile(tsv, "tsv", settings, { splitDataAndSpec: true }) {
+		builder.add(id, column.spec, column.data)
+	}
+	return builder.build()
+}
+
+self.body(func(inputs) {
+	sides := inputs.sides.getDataAsJson()
+	params := inputs.params
+
+	// What leaves the block. One frame, the record key on axis 0, and the plate
+	// carried only under abundance.
+	//
+	// The trace is what names the dataset everywhere downstream. Without it a
+	// consumer falls back to the anchor column's own label, so the set shows up
+	// called after whatever that column happens to be.
+	// makeTrace eats its first argument as the upstream trace and treats only
+	// the rest as steps. This block has no upstream, so an empty map stands in;
+	// passing the step alone silently produces an empty trace.
+	trace := pSpec.makeTrace({}, {
+		type: "milaboratories.clone-annotation",
+		id: params.blockId,
+		importance: 30,
+		label: params.label
+	})
+
+	toPool := pframes.pFrameBuilder()
+	for id, column in xsv.importFile(
+		inputs.clones, "tsv",
+		exportSpecs.variantSettings(params.blockId, params.properties, params.scheme, sides),
+		{ splitDataAndSpec: true }
+	) {
+		toPool.add("variant." + id, trace.inject(column.spec), column.data)
+	}
+	for id, column in xsv.importFile(
+		inputs.abundance, "tsv",
+		exportSpecs.abundanceSettings(params.blockId),
+		{ splitDataAndSpec: true }
+	) {
+		toPool.add("abundance." + id, trace.inject(column.spec), column.data)
+	}
+
+	return {
+		pairsTable: importFrame(inputs.pairs, pairCols.settings(sides)),
+		clonesTable: importFrame(inputs.clones, cloneCols.settings(params.properties, sides)),
+		plateSummaryTable: importFrame(inputs.plates, plateCols.settings(sides)),
+		plateMap: importFrame(inputs.wells, wellCols.settings(params.properties, sides)),
+		variants: toPool.build()
+	}
+})
