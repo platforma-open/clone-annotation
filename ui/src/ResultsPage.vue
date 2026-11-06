@@ -40,10 +40,10 @@ const tab = computed({
 const cloneSelection = ref<PlSelectionModel>(createPlSelectionModel());
 const selectedCount = computed(() => cloneSelection.value.selectedKeys.length);
 
-// The selected clones as stacked tracks with their reads; every clone, up to the
-// viewer's limit, when none is selected. The clones table is keyed on its own axis
-// and the viewer on the exported one; the keys are the same variant keys, so only
-// the axis changes.
+// The selected clones as stacked tracks with their reads. It opens only over a
+// selection: given none, the viewer would load every clone up to its limit, reads
+// and all. The clones table is keyed on its own axis and the viewer on the exported
+// one; the keys are the same variant keys, so only the axis changes.
 const viewerOpen = ref(false);
 // The block's threshold, so the viewer marks the same bases low as the QC page does.
 const qualityThreshold = computed(
@@ -62,7 +62,7 @@ const viewerSelection = computed((): PlSelectionModel | undefined => {
     <template #append>
       <PlBtnGhost
         v-if="tab === 'clones'"
-        :disabled="!app.model.outputs.variantAxisSpec"
+        :disabled="!viewerSelection"
         @click.stop="viewerOpen = true"
       >
         Sequence viewer{{ selectedCount ? ` (${selectedCount})` : "" }}
