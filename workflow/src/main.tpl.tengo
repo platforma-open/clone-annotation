@@ -185,8 +185,12 @@ wf.body(func(args) {
 			inMediumQueue().
 			run()
 
-		// The field order here is the order annotate.py reads positionally, so
-		// whatever MiXCR calls its columns cannot break the join.
+		// annotate.py reads these columns by header name, not by position, so the
+		// preset is free to add its own columns first. A mutation flag takes an
+		// optional trailing argument, so each is followed by another flag and the
+		// no-argument `-vAlignment` stays last before the positionals; a mutation
+		// flag placed there would swallow the input file. The gene-feature strings
+		// must match MIXCR_PARAM_FIELDS in annotate.py.
 		exported := exec.builder().
 			software(mixcrSw).
 			env("MI_USE_SYSTEM_CA", "true").
@@ -198,9 +202,23 @@ wf.body(func(args) {
 			arg("-vGene").
 			arg("-dGene").
 			arg("-jGene").
+			arg("-cGene").
 			arg("-vHit").
 			arg("-dHit").
 			arg("-jHit").
+			arg("-cHit").
+			arg("-isotype").arg("primary").
+			arg("-nMutationsCount").arg("{FR1Begin:FR3End}").
+			arg("-nMutationsRate").arg("{FR1Begin:FR3End}").
+			arg("-aaMutationsCount").arg("{FR1Begin:FR3End}").
+			arg("-aaMutationsRate").arg("{FR1Begin:FR3End}").
+			arg("-nMutationsCount").arg("FR4").
+			arg("-nMutationsRate").arg("FR4").
+			arg("-aaMutationsCount").arg("FR4").
+			arg("-aaMutationsRate").arg("FR4").
+			arg("-nMutationsCount").arg("{FR1Begin:FR3End},FR4").
+			arg("-aaMutationsCount").arg("CDR1,CDR2").
+			arg("-aaMutationsCount").arg("FR1,FR2,FR3,FR4").
 			arg("-vHitScore").
 			arg("-vAlignment").
 			arg("alignments.vdjca").

@@ -230,12 +230,61 @@ MIXCR_FIELDS = {
     "vGene": "bestVGene",
     "dGene": "bestDGene",
     "jGene": "bestJGene",
+    "cGene": "bestCGene",
     "vHit": "bestVHit",
     "dHit": "bestDHit",
     "jHit": "bestJHit",
+    "cHit": "bestCHit",
+    "isotype": "isotypePrimary",
     "vScore": "bestVHitScore",
     "vAlignment": "bestVAlignment",
 }
+
+# The gene features MiXCR counts mutations over, matching mixcr-clonotyping so the
+# columns mean the same thing. A read that does not cover a feature gets MiXCR's
+# not-covered token, which the p-column spec turns into NA.
+V_CORE = "{FR1Begin:FR3End}"
+J_CORE = "FR4"
+
+# MiXCR writes each of these under a header that joins the field and the gene
+# feature with no separator, for example "nMutationsCount{FR1Begin:FR3End}" or
+# "nMutationsCountFR4". The feature strings here must match the arguments the
+# workflow passes to exportAlignments. read_mixcr finds each column by joining
+# them; if the header format ever differs it reports the real headers instead of
+# guessing (see read_mixcr).
+MIXCR_PARAM_FIELDS = {
+    "vNtMutCount": ("nMutationsCount", V_CORE),
+    "vNtMutRate": ("nMutationsRate", V_CORE),
+    "vAaMutCount": ("aaMutationsCount", V_CORE),
+    "vAaMutRate": ("aaMutationsRate", V_CORE),
+    "jNtMutCount": ("nMutationsCount", J_CORE),
+    "jNtMutRate": ("nMutationsRate", J_CORE),
+    "jAaMutCount": ("aaMutationsCount", J_CORE),
+    "jAaMutRate": ("aaMutationsRate", J_CORE),
+    "nMutations": ("nMutationsCount", V_CORE + "," + J_CORE),
+    "nAaMutCDR": ("aaMutationsCount", "CDR1,CDR2"),
+    "nAaMutFWR": ("aaMutationsCount", "FR1,FR2,FR3,FR4"),
+    "vjJunctionLen": ("nLength", "VJJunction"),
+    "vdJunctionLen": ("nLength", "VDJunction"),
+    "djJunctionLen": ("nLength", "DJJunction"),
+}
+
+
+def _to_number(value):
+    """A mutation count or rate as a number, or None for empty / not-covered."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+# The germline and mutation fields added for mixcr-clonotyping parity, in one
+# place so the sequence table's header and row cannot drift apart. `productive`
+# is not here: the sequence table already carries it.
+MIXCR_EXTRA_COLUMNS = ["cGene", "cHit", "isotype",
+                       "vNtMutCount", "vNtMutRate", "vAaMutCount", "vAaMutRate",
+                       "jNtMutCount", "jNtMutRate", "jAaMutCount", "jAaMutRate",
+                       "nMutations", "nAaMutCDR", "nAaMutFWR", "fractionCDRMutations"]
 
 
 def read_anarci(path):
@@ -311,6 +360,18 @@ def read_mixcr(path):
              if column in header}
     if "id" not in where:
         return {}
+
+    for name, (prefix, feature) in MIXCR_PARAM_FIELDS.items():
+        column = prefix + feature
+        if column in header:
+            where[name] = header.index(column)
+    missing = [name for name in MIXCR_PARAM_FIELDS if name not in where]
+    if missing:
+        # A parameterised header did not match the "field" + "feature" form. The
+        # block still runs without those columns; this names the real headers so
+        # the feature strings can be corrected without guessing.
+        print("mutation fields not found: %s; MiXCR headers: %s"
+              % (", ".join(missing), ", ".join(header)), file=sys.stderr)
 
     out = {}
     for row in rows[1:]:
@@ -480,6 +541,7 @@ def write_sequences(path, annotations, sequences, properties):
          "note", "regionStatus", "observedChain", "frame", "productive", "stopRegion",
          "mixedPositions", "vGene", "dGene", "jGene", "vHit", "dHit", "jHit",
          "mixcrChains", "vAlignment"]
+        + MIXCR_EXTRA_COLUMNS
         + ["aa_%s" % f for f in FEATURES]
         + ["nt_%s" % f for f in FEATURES]
         + ["prop_%d" % i for i in range(len(names))]
@@ -511,6 +573,7 @@ def write_sequences(path, annotations, sequences, properties):
                  entry.get("dHit", ""), entry.get("jHit", ""),
                  entry.get("mixcrChains", ""),
                  entry.get("vAlignment", "")]
+                + [entry.get(c, "") for c in MIXCR_EXTRA_COLUMNS]
                 + [amino.get(f, "") for f in FEATURES]
                 + [bases.get(f, "") for f in FEATURES]
                 + [p["values"].get(well_key, "") for p in properties]
@@ -522,9 +585,18 @@ def write_sequences(path, annotations, sequences, properties):
 SIDES = {"H": "heavy", "B": "heavy", "D": "heavy",
          "KL": "light", "A": "light", "G": "light"}
 
-# Mirrored on both sides of a clone. Identity stays unprefixed.
+# Mirrored on both sides of a clone. Identity stays unprefixed. The germline and
+# mutation fields after jHit are the mixcr-clonotyping per-clone columns: C gene
+# and isotype, whether the chain is productive, and the somatic hypermutation of
+# V and J. A light chain has no isotype, so it stays empty there.
 PER_SIDE = ["chain", "fileChain", "source", "length", "meanQuality", "regionStatus",
-            "vGene", "dGene", "jGene", "vHit", "dHit", "jHit"]
+            "vGene", "dGene", "jGene", "vHit", "dHit", "jHit",
+            "cGene", "cHit", "isotype", "productiveFlag",
+            "vNtMutCount", "vNtMutRate", "vAaMutCount", "vAaMutRate",
+            "jNtMutCount", "jNtMutRate", "jAaMutCount", "jAaMutRate",
+            "nMutations", "nAaMutCDR", "nAaMutFWR", "fractionCDRMutations",
+            "cdr3LenNt", "cdr3LenAa", "vjJunctionLen", "vdJunctionLen",
+            "djJunctionLen", "totalAddedNt"]
 
 
 def sides_found(annotations):
@@ -548,20 +620,32 @@ def pair_columns():
     return cols
 
 
+def _side_value(field, entry, sequence):
+    """One scalar of a side, by its name in PER_SIDE. Most fields come straight
+    from the annotation; a few read the sequence it was built from."""
+    if field == "chain":
+        return detected_chain(entry)
+    if field == "fileChain":
+        return entry.get("declaredChain", "")
+    if field in ("source", "length", "meanQuality"):
+        return sequence.get(field, "")
+    if field == "regionStatus":
+        return entry.get("status", "")
+    return entry.get(field, "")
+
+
 def side_cells(entry, by_id):
-    """One side of a clone, flat: its facts, then every region twice over."""
-    m = by_id.get(entry["id"], {}) if entry else {}
-    amino = (entry or {}).get("aa", {})
-    bases = (entry or {}).get("nt", {})
-    cells = [
-        detected_chain(entry) if entry else "", (entry or {}).get("declaredChain", ""),
-        m.get("source", ""),
-        m.get("length", ""), m.get("meanQuality", ""),
-        (entry or {}).get("status", ""), (entry or {}).get("vGene", ""),
-        (entry or {}).get("dGene", ""), (entry or {}).get("jGene", ""),
-        (entry or {}).get("vHit", ""), (entry or {}).get("dHit", ""),
-        (entry or {}).get("jHit", ""),
-    ]
+    """One side of a clone, flat: its facts, then every region twice over.
+
+    The scalars follow PER_SIDE position for position, so the header
+    pair_columns() writes stays aligned with the values here.
+    """
+    if not entry:
+        return [""] * len(PER_SIDE) + [""] * (2 * len(FEATURES))
+    sequence = by_id.get(entry["id"], {})
+    amino = entry.get("aa", {})
+    bases = entry.get("nt", {})
+    cells = [_side_value(f, entry, sequence) for f in PER_SIDE]
     return cells + [amino.get(f, "") for f in FEATURES] + [bases.get(f, "") for f in FEATURES]
 
 
@@ -1176,6 +1260,12 @@ def main(argv=None):
             entry["aa"] = amino
             if nucleotide:
                 entry["nt"] = bases
+            # CDR3 length from the regions the block itself built, so it matches
+            # the block's own CDR3 columns. nt in nucleotides, aa in residues.
+            if amino.get("CDR3"):
+                entry["cdr3LenAa"] = len(amino["CDR3"])
+            if nucleotide and bases.get("CDR3"):
+                entry["cdr3LenNt"] = len(bases["CDR3"])
             entry["status"] = STATUS_ANNOTATED if any(amino.values()) else STATUS_FAILED
             if entry["status"] == STATUS_ANNOTATED:
                 entry["domainComplete"] = domain_complete(entry)
@@ -1186,6 +1276,10 @@ def main(argv=None):
                     "" if not entry["domainComplete"] and not entry["stopRegion"]
                     else "no" if entry["stopRegion"] else "yes"
                 )
+                # mixcr-clonotyping names this true/false; the sequence table keeps
+                # the block's own yes/no for reading.
+                entry["productiveFlag"] = {"yes": "true", "no": "false"}.get(
+                    entry["productive"], "")
                 reads = [peaks[p] for p in sequence.get("reads", []) if p in peaks]
                 mixed = mixed_positions(bases.get("CDR3", "") if nucleotide else "", reads)
                 if mixed is not None:
@@ -1197,15 +1291,35 @@ def main(argv=None):
         hit = aligned.get(chosen)
         if hit is not None:
             # MiXCR writes "-" where it found no hit. An absent gene is absent,
-            # not a gene called "-".
-            for field, name in (("vGene", "vGene"), ("dGene", "dGene"),
-                                ("jGene", "jGene"), ("vHit", "vHit"),
-                                ("dHit", "dHit"), ("jHit", "jHit"),
-                                ("chains", "mixcrChains"),
-                                ("vAlignment", "vAlignment")):
+            # not a gene called "-". The same copy carries the germline gene
+            # calls, the isotype and the somatic-hypermutation counts and rates.
+            for field in ("vGene", "dGene", "jGene", "cGene", "vHit", "dHit",
+                          "jHit", "cHit", "isotype", "vAlignment",
+                          "vNtMutCount", "vNtMutRate", "vAaMutCount", "vAaMutRate",
+                          "jNtMutCount", "jNtMutRate", "jAaMutCount", "jAaMutRate",
+                          "nMutations", "nAaMutCDR", "nAaMutFWR",
+                          "vjJunctionLen", "vdJunctionLen", "djJunctionLen"):
                 value = hit.get(field, "")
                 if value not in ("", "-"):
-                    entry[name] = value
+                    entry[field] = value
+            # `chains` is MiXCR's locus; it travels under its own entry name.
+            if hit.get("chains", "") not in ("", "-"):
+                entry["mixcrChains"] = hit["chains"]
+            # The share of amino-acid changes that fall in the CDRs. Honest only
+            # when some mutation was seen; left empty when V reads as germline.
+            cdr = _to_number(entry.get("nAaMutCDR"))
+            fwr = _to_number(entry.get("nAaMutFWR"))
+            if cdr is not None and fwr is not None and cdr + fwr > 0:
+                entry["fractionCDRMutations"] = round(cdr / (cdr + fwr), 4)
+            # Total added nucleotides: VD + DJ junctions for a chain with a D gene,
+            # else the VJ junction. Matches mixcr-clonotyping.
+            vd = _to_number(entry.get("vdJunctionLen"))
+            dj = _to_number(entry.get("djJunctionLen"))
+            vj = _to_number(entry.get("vjJunctionLen"))
+            if vd is not None and dj is not None:
+                entry["totalAddedNt"] = int(vd + dj)
+            elif vj is not None:
+                entry["totalAddedNt"] = int(vj)
         elif args.mixcr and sequence.get("source") != "none":
             # R31: no germline is not a failed annotation. The sequence keeps its
             # regions, its chain and its translation.

@@ -3,8 +3,12 @@ exportSpecs := import(":export-specs")
 
 // Two chains, eight features, two alphabets.
 SEQUENCE_COLUMNS := 32
-// Two chains, V, D and J, each as a gene and as a hit with its allele.
-GENE_COLUMNS := 12
+// Two chains, V, D, J and C, each as a gene and as a hit with its allele.
+GENE_COLUMNS := 16
+// Two chains, each with isotype, productive, and twelve mutation columns.
+GERMLINE_COLUMNS := 28
+// Two chains, each with CDR3 nt/aa length, three junction lengths and total added.
+LENGTH_COLUMNS := 12
 // Clone Id, wells and pairing.
 FIXED_COLUMNS := 3
 
@@ -20,10 +24,38 @@ countOf := func(settings, name) {
 
 TestVariantSettingsBuildEveryColumn := func() {
 	s := exportSpecs.variantSettings("blk", undefined, "imgt", undefined)
-	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + FIXED_COLUMNS, len(s.columns))
+	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + GERMLINE_COLUMNS + LENGTH_COLUMNS + FIXED_COLUMNS, len(s.columns))
 	test.isEqual(SEQUENCE_COLUMNS, countOf(s, "pl7.app/vdj/sequence"))
 	test.isEqual(GENE_COLUMNS / 2, countOf(s, "pl7.app/vdj/geneHit"))
 	test.isEqual(GENE_COLUMNS / 2, countOf(s, "pl7.app/vdj/geneHitWithAllele"))
+	// Both chains carry an isotype, a productivity flag, and the V and J mutation
+	// counts and rates.
+	test.isEqual(2, countOf(s, "pl7.app/vdj/isotype"))
+	test.isEqual(2, countOf(s, "pl7.app/vdj/sequence/productive"))
+	test.isEqual(4, countOf(s, "pl7.app/vdj/sequence/nMutationsCount"))
+	test.isEqual(4, countOf(s, "pl7.app/vdj/sequence/nMutationsRate"))
+	test.isEqual(2, countOf(s, "pl7.app/vdj/sequence/fractionCDRMutations"))
+	// Both chains carry the six length columns.
+	test.isEqual(LENGTH_COLUMNS, countOf(s, "pl7.app/vdj/sequenceLength"))
+}
+
+TestMutationColumnsMatchClonotyping := func() {
+	s := exportSpecs.variantSettings("blk", undefined, "imgt", ["heavy"])
+	for c in s.columns {
+		if c.column == "heavy_vNtMutCount" {
+			test.isEqual("pl7.app/vdj/sequence/nMutationsCount", c.spec.name)
+			test.isEqual("Int", c.spec.valueType)
+			test.isEqual("V", c.spec.domain["pl7.app/vdj/gene"])
+			test.isEqual("A", c.spec.domain["pl7.app/vdj/scClonotypeChain"])
+			test.isEqual("region_not_covered", c.naRegex)
+		}
+		if c.column == "heavy_nMutations" {
+			test.isEqual("pl7.app/vdj/sequence/nMutations", c.spec.name)
+			test.isEqual("true", c.spec.annotations["pl7.app/isScore"])
+			test.isEqual("decreasing", c.spec.annotations["pl7.app/score/rankingOrder"])
+			test.isTrue(is_undefined(c.spec.domain["pl7.app/vdj/gene"]), "a score has no gene domain")
+		}
+	}
 }
 
 TestTheGeneIsShownAndTheAlleleOffered := func() {
@@ -86,13 +118,13 @@ TestAPropertyBringsItsValuesAndItsSummaries := func() {
 	props := [{ name: "elisa", type: "Double", values: {} }]
 	s := exportSpecs.variantSettings("blk", props, "imgt", undefined)
 	// values, disagrees, and four summaries.
-	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + FIXED_COLUMNS + 6, len(s.columns))
+	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + GERMLINE_COLUMNS + LENGTH_COLUMNS + FIXED_COLUMNS + 6, len(s.columns))
 }
 
 TestALabelGetsNoSummaries := func() {
 	props := [{ name: "note", type: "String", values: {} }]
 	s := exportSpecs.variantSettings("blk", props, "imgt", undefined)
-	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + FIXED_COLUMNS + 2, len(s.columns))
+	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + GERMLINE_COLUMNS + LENGTH_COLUMNS + FIXED_COLUMNS + 2, len(s.columns))
 }
 
 TestAbundanceCarriesTheSampleAxisFirst := func() {

@@ -247,6 +247,105 @@ def test_germline_joins_positionally_and_its_absence_is_reported():
     check("absence reported", result["notAligned"], ["Plate1 A2 IGH"])
 
 
+# The parameterised mutation headers MiXCR writes, in the "field(feature)" form
+# read_mixcr builds. Kept beside the test so a change to the feature strings in
+# annotate.py shows up here.
+MUTATION_HEADER = {
+    "nMutationsCount{FR1Begin:FR3End}": "7",
+    "nMutationsRate{FR1Begin:FR3End}": "0.05",
+    "aaMutationsCount{FR1Begin:FR3End}": "3",
+    "aaMutationsRate{FR1Begin:FR3End}": "0.02",
+    "nMutationsCountFR4": "1",
+    "nMutationsRateFR4": "0.01",
+    "aaMutationsCountFR4": "0",
+    "aaMutationsRateFR4": "0.0",
+    "nMutationsCount{FR1Begin:FR3End},FR4": "8",
+    "aaMutationsCountCDR1,CDR2": "2",
+    "aaMutationsCountFR1,FR2,FR3,FR4": "1",
+}
+
+
+def test_mutation_and_germline_columns_join_each_sequence():
+    work = tempfile.mkdtemp()
+    report = os.path.join(work, "report.json")
+    json.dump({"sequences": [
+        {"id": "m0", "plate": "P1", "well": "A1", "chain": "IGH", "source": "merged"},
+    ]}, open(report, "w"))
+
+    csv_h = os.path.join(work, "h.csv")
+    write_anarci(csv_h, [("m0|0", "120.0")])
+
+    # The constant region, the isotype and every mutation field, after the preset's
+    # own columns so position cannot be relied on.
+    mixcr = os.path.join(work, "alignments.tsv")
+    gene_cols = ["descrsR1", "topChains", "bestVGene", "bestJGene", "bestCGene",
+                 "bestVHit", "bestJHit", "bestCHit", "isotypePrimary"]
+    gene_vals = ["m0", "IGH", "IGHV3-23", "IGHJ4", "IGHG1",
+                 "IGHV3-23*00", "IGHJ4*00", "IGHG1*00", "IgG"]
+    mut_cols = list(MUTATION_HEADER)
+    # A heavy chain: VD and DJ junctions present, VJ empty.
+    junction = {"nLengthVJJunction": "", "nLengthVDJunction": "3", "nLengthDJJunction": "4"}
+    jun_cols = list(junction)
+    with open(mixcr, "w") as handle:
+        handle.write("\t".join(gene_cols + mut_cols + jun_cols) + "\n")
+        handle.write("\t".join(gene_vals + [MUTATION_HEADER[c] for c in mut_cols]
+                               + [junction[c] for c in jun_cols]) + "\n")
+
+    sequences_tsv = os.path.join(work, "sequences.tsv")
+    result = run_annotate(work, report,
+                          ["--csv_h", csv_h, "--mixcr", mixcr,
+                           "--out_sequences_tsv", sequences_tsv])
+    e = {a["id"]: a for a in result["annotations"]}["m0"]
+    check("c gene without allele", e["cGene"], "IGHG1")
+    check("c hit with allele", e["cHit"], "IGHG1*00")
+    check("isotype", e["isotype"], "IgG")
+    check("v nt mutation count", e["vNtMutCount"], "7")
+    check("v nt mutation rate", e["vNtMutRate"], "0.05")
+    check("v aa mutation count", e["vAaMutCount"], "3")
+    check("j nt mutation count", e["jNtMutCount"], "1")
+    check("j aa count of zero is kept", e["jAaMutCount"], "0")
+    check("total nt mutations", e["nMutations"], "8")
+    check("cdr aa mutations", e["nAaMutCDR"], "2")
+    check("fwr aa mutations", e["nAaMutFWR"], "1")
+    check("cdr fraction of all aa mutations", e["fractionCDRMutations"], round(2 / 3, 4))
+    check("vd junction length", e["vdJunctionLen"], "3")
+    check("dj junction length", e["djJunctionLen"], "4")
+    check("total added is vd plus dj", e["totalAddedNt"], 7)
+    check("cdr3 aa length matches the region", e["cdr3LenAa"], len(e["aa"]["CDR3"]))
+
+    with open(sequences_tsv) as handle:
+        rows = list(csv.reader(handle, delimiter="\t"))
+    head = rows[0]
+    row = dict(zip(head, rows[1]))
+    check("sequence table has the isotype column", "isotype" in head, True)
+    check("sequence table has the mutation column", "nMutations" in head, True)
+    check("sequence row carries the mutation count", row["nMutations"], "8")
+    check("sequence row carries the fraction", row["fractionCDRMutations"],
+          str(round(2 / 3, 4)))
+
+
+def test_a_missing_mutation_header_is_not_guessed():
+    work = tempfile.mkdtemp()
+    report = os.path.join(work, "report.json")
+    json.dump({"sequences": [
+        {"id": "m0", "plate": "P1", "well": "A1", "chain": "IGH", "source": "merged"},
+    ]}, open(report, "w"))
+    csv_h = os.path.join(work, "h.csv")
+    write_anarci(csv_h, [("m0|0", "120.0")])
+
+    # Only the gene calls, none of the mutation columns.
+    mixcr = os.path.join(work, "alignments.tsv")
+    with open(mixcr, "w") as handle:
+        handle.write("descrsR1\ttopChains\tbestVGene\tbestVHit\n")
+        handle.write("m0\tIGH\tIGHV3-23\tIGHV3-23*00\n")
+
+    e = {a["id"]: a for a in
+         run_annotate(work, report, ["--csv_h", csv_h, "--mixcr", mixcr])["annotations"]}["m0"]
+    check("gene still read", e["vGene"], "IGHV3-23")
+    check("no mutation count invented", e.get("vNtMutCount"), None)
+    check("no fraction invented", e.get("fractionCDRMutations"), None)
+
+
 def sequence(seq_id, plate, well, chain, pair_key, observed=None):
     e = {"id": seq_id, "plate": plate, "well": well, "declaredChain": chain,
          "pairKey": pair_key}
