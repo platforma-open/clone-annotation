@@ -60,18 +60,25 @@ const hasReads = computed(() => (app.model.outputs.traceReport?.reads.length ?? 
 /** The four tag colours PlAgCellStatusTag draws. */
 type StatusTag = "OK" | "WARN" | "ALERT" | "HOLD";
 
+// A read Tracy basecalled sits in `reads`, with `kept` telling a usable read
+// from one trimmed too short. A read Tracy could not call at all skips `reads`
+// and only leaves a set-aside reason. So `read` present-or-absent separates a
+// low-quality read from one that gave nothing.
+
 /** The tag colour for a file, or undefined before the block has read it. */
 function readStatusTag(row?: FileRow): StatusTag | undefined {
+  if (row?.read?.kept === true) return "OK";
+  if (row?.read !== undefined) return "WARN";
   if (row?.setAsideReason !== undefined) return "ALERT";
-  if (row?.read === undefined) return undefined;
-  return row.read.kept ? "OK" : "WARN";
+  return undefined;
 }
 
 /** A sortable word for the status, so the column still sorts and exports. */
 function readStatusLabel(row?: FileRow): string | undefined {
-  if (row?.setAsideReason !== undefined) return "Failed";
-  if (row?.read === undefined) return undefined;
-  return row.read.kept ? "Kept" : "Low quality";
+  if (row?.read?.kept === true) return "Kept";
+  if (row?.read !== undefined) return "Low quality";
+  if (row?.setAsideReason !== undefined) return "No sequence";
+  return undefined;
 }
 
 const rowData = computed<FileRow[]>(() =>
@@ -149,9 +156,9 @@ const columnDefs = computed<ColDef<FileRow>[]>(() => [
         {
           headerName: "Status",
           width: 120,
-          // A coloured tag, not a greyed row: green when the read is kept, red
-          // when it was set aside, amber when a read came through but stayed
-          // below the quality floor. The set-aside reason shows on hover.
+          // A coloured tag, not a greyed row: green when the read is kept, amber
+          // when it was basecalled but trimmed too short, red when Tracy got no
+          // sequence at all. The reason shows on hover.
           cellRendererSelector: (cell) => {
             const type = readStatusTag(cell.data);
             return type ? { component: PlAgCellStatusTag, params: { type } } : undefined;
@@ -199,6 +206,9 @@ const gridOptions: GridOptions<FileRow> = {
   getRowId: (row) => row.data.key,
   rowHeight: 45,
   getMainMenuItems: () => [],
+  // Native browser tooltips, so the set-aside reason on the Status tag shows at
+  // once on hover. The grid's own tooltip waits two seconds before it appears.
+  enableBrowserTooltips: true,
   components: { PlAgCellFile },
   rowSelection: { mode: "multiRow", checkboxes: false, headerCheckbox: false },
   getContextMenuItems: (params) => {
