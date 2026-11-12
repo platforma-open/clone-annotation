@@ -89,7 +89,7 @@ settings := func(properties) {
 		col("mixedPositions", "Long", "Mixed Positions in CDR3"),
 		col("flank5Nt", "Long", "Read nt before the Domain"),
 		col("flank3Nt", "Long", "Read nt after the Domain"),
-		col("unusualFlank", "String", "Unusual Flank"),
+		col("unusualFlank", "String", "Extra Read Beyond Domain"),
 		col("vGene", "String", "V Gene"),
 		col("dGene", "String", "D Gene"),
 		col("jGene", "String", "J Gene"),

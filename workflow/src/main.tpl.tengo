@@ -154,12 +154,14 @@ wf.body(func(args) {
 			inMediumQueue().
 			run()
 
-		// Cut each consensus to its ANARCI domain before MiXCR. A read of an antibody
-		// construct runs from the signal peptide through the domain and on into the
-		// constant region; with that tail present MiXCR over-extends V and aligns no D or
-		// J. ANARCI already found the domain, so this cuts the read to it and MiXCR then
-		// aligns D and J normally. Only MiXCR's input is trimmed; the annotation and the
-		// viewer still use the full consensus. So ANARCI now runs before MiXCR.
+		// Two MiXCR aligns, because no single one gives both the V(D)J and the constant.
+		// The main align (below) runs on the read cut to its domain, so V cannot over-extend
+		// and D, J, CDR3 and FR4 align for every read whatever its tail is. A second align
+		// (alignConstant) runs on the full read with the right boundary at C, which aligns
+		// the constant region and calls the C gene and isotype where the tail is a real
+		// constant. annotate.py takes the V(D)J from the first and the C gene / isotype from
+		// the second. A C boundary on its own would lose J wherever the tail is vector; the
+		// trim covers those. See wip/domain-trim-before-mixcr.md.
 		trimmed := exec.builder().
 			software(trimSw).
 			addFile(tracy.nucleotideName, result.getFile(tracy.nucleotideName)).
@@ -174,37 +176,64 @@ wf.body(func(args) {
 			inMediumQueue().
 			run()
 
-		// MiXCR adds the germline, and only where a library covers the
-		// material. Nothing below depends on it.
-		align := exec.builder().
+		mixcrAlign := func(input, boundary, output) {
+			return exec.builder().
+				software(mixcrSw).
+				env("MI_USE_SYSTEM_CA", "true").
+				secret("MI_LICENSE", "MI_LICENSE").
+				addFile(input.name, input.file).
+				arg("align").
+				arg("-p").arg("generic-amplicon").
+				arg("--species").arg(species).
+				arg("--rna").
+				arg("--floating-left-alignment-boundary").
+				// The right boundary takes a required value; passing the flag bare makes it
+				// swallow the next argument. `J` for the main align (read cut to the domain),
+				// `C` for the constant align (full read ending in the constant region).
+				arg("--floating-right-alignment-boundary").arg(boundary).
+				// Required by the generic-amplicon preset: its bundle fails validation at
+				// align time without an assembling feature, even though this block runs no
+				// assemble step. CDR3 is the standard choice.
+				arg("--assemble-clonotypes-by").arg("CDR3").
+				// Without this the FASTA header is thrown away during alignment and
+				// `-descrsR1` has nothing to export, so the join loses its key.
+				arg("-OsaveOriginalReads=true").
+				// A sequence built from one read covers one end of the domain and
+				// may stop short of CDR3. Dropping those would lose a fifth of a
+				// real plate from the germline half without saying so.
+				arg("--keep-non-CDR3-alignments").
+				arg("--threads").argExpr("{system.cpu}").
+				arg(input.name).
+				arg(output).
+				saveFile(output).
+				printErrStreamToStdout().
+				inMediumQueue().
+				run()
+		}
+
+		align := mixcrAlign(
+			{ name: "trimmed.fasta", file: trimmed.getFile("trimmed.fasta") },
+			"J", "alignments.vdjca")
+		alignConstant := mixcrAlign(
+			{ name: tracy.nucleotideName, file: result.getFile(tracy.nucleotideName) },
+			"C", "constant.vdjca")
+
+		// The C gene and isotype, from the constant align's full-read alignments. Only these
+		// two are taken; the V(D)J of this pass is ignored (the main align gives it). Empty
+		// for a read whose tail is not a real constant, which is the honest answer.
+		exportedConstant := exec.builder().
 			software(mixcrSw).
 			env("MI_USE_SYSTEM_CA", "true").
 			secret("MI_LICENSE", "MI_LICENSE").
-			addFile("trimmed.fasta", trimmed.getFile("trimmed.fasta")).
-			arg("align").
-			arg("-p").arg("generic-amplicon").
-			arg("--species").arg(species).
-			arg("--rna").
-			arg("--floating-left-alignment-boundary").
-			// The right boundary takes a required value: `J` for a J-gene
-			// primer. Passing the flag bare makes it swallow the next argument,
-			// and MiXCR then exits 2 with its usage text.
-			arg("--floating-right-alignment-boundary").arg("J").
-			// Required by the generic-amplicon preset: its bundle fails validation at
-			// align time without an assembling feature, even though this block runs no
-			// assemble step. CDR3 is the standard choice.
-			arg("--assemble-clonotypes-by").arg("CDR3").
-			// Without this the FASTA header is thrown away during alignment and
-			// `-descrsR1` has nothing to export, so the join loses its key.
-			arg("-OsaveOriginalReads=true").
-			// A sequence built from one read covers one end of the domain and
-			// may stop short of CDR3. Dropping those would lose a fifth of a
-			// real plate from the germline half without saying so.
-			arg("--keep-non-CDR3-alignments").
-			arg("--threads").argExpr("{system.cpu}").
-			arg("trimmed.fasta").
-			arg("alignments.vdjca").
-			saveFile("alignments.vdjca").
+			addFile("constant.vdjca", alignConstant.getFile("constant.vdjca")).
+			arg("exportAlignments").
+			arg("-descrsR1").
+			arg("-cGene").
+			arg("-cHit").
+			arg("-isotype").arg("primary").
+			arg("constant.vdjca").
+			arg("constant.tsv").
+			saveFile("constant.tsv").
 			printErrStreamToStdout().
 			inMediumQueue().
 			run()
@@ -278,6 +307,7 @@ wf.body(func(args) {
 			addFile("anarci_H.csv", anarci.getFile("anarci_H.csv")).
 			addFile("anarci_KL.csv", anarci.getFile("anarci_KL.csv")).
 			addFile("alignments.tsv", exported.getFile("alignments.tsv")).
+			addFile("constant.tsv", exportedConstant.getFile("constant.tsv")).
 			addFile(tracy.nucleotideName, result.getFile(tracy.nucleotideName)).
 			addFile(tracy.peaksName, result.getFile(tracy.peaksName)).
 			arg("--report").arg(tracy.reportName).
@@ -287,6 +317,7 @@ wf.body(func(args) {
 			arg("--csv_h").arg("anarci_H.csv").
 			arg("--csv_kl").arg("anarci_KL.csv").
 			arg("--mixcr").arg("alignments.tsv").
+			arg("--constant").arg("constant.tsv").
 			writeFile("properties.json", is_undefined(args.properties) ? [] : args.properties).
 			arg("--properties").arg("properties.json").
 			arg("--out").arg("annotation.json").

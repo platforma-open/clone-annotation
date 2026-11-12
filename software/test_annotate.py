@@ -620,6 +620,20 @@ def test_trim_keeps_the_whole_read_without_numbering():
     check("no read stays empty", trim.trim("", ("H", 0, ([], [], 0.0, 0), 0.0)), "")
 
 
+def test_read_constant_keys_c_gene_and_isotype_by_read():
+    from annotate import read_constant
+    import tempfile, os
+    path = os.path.join(tempfile.mkdtemp(), "constant.tsv")
+    with open(path, "w") as handle:
+        handle.write("descrsR1\tbestCGene\tbestCHit\tisotypePrimary\n")
+        handle.write("s1\tIGHG1\tIGHG1*00\tIgG\n")       # a real constant
+        handle.write("s2\t\t\t\n")                        # tail not a constant: empty
+    out = read_constant(path)
+    check("a real constant is read by id", out.get("s1"),
+          {"cGene": "IGHG1", "cHit": "IGHG1*00", "isotype": "IgG"})
+    check("an empty constant is left out", "s2" in out, False)
+
+
 def test_markup_round_trips_through_base36():
     from annotate import parse_markup, encode_markup
     check("base36 encode", encode_markup([("1", 36, 72)]), "1:10+20")

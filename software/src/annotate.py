@@ -680,6 +680,35 @@ def read_mixcr(path):
     return out
 
 
+# What the constant-boundary align gives that the domain-trimmed main align cannot: the C
+# gene, its allele, and the isotype. By the read id (descrsR1), the same id both aligns use.
+_CONSTANT_FIELDS = {"cGene": "bestCGene", "cHit": "bestCHit", "isotype": "isotypePrimary"}
+
+
+def read_constant(path):
+    """C gene, C hit and isotype per read id, from the C-boundary pass. Empty for a read
+    whose 3' tail is not a real constant region, which is the honest answer."""
+    out = {}
+    if path is None or not pathlib.Path(path).exists():
+        return out
+    with open(path, newline="") as handle:
+        rows = list(csv.reader(handle, delimiter="\t"))
+    if len(rows) < 2 or "descrsR1" not in rows[0]:
+        return out
+    header = rows[0]
+    id_at = header.index("descrsR1")
+    where = {name: header.index(col) for name, col in _CONSTANT_FIELDS.items() if col in header}
+    for row in rows[1:]:
+        if not row or id_at >= len(row):
+            continue
+        key = row[id_at].split()
+        record = {name: row[i] for name, i in where.items()
+                  if i < len(row) and row[i] not in ("", "-")}
+        if key and record:
+            out[key[0]] = record
+    return out
+
+
 def translate(nucleotide):
     return "".join(
         CODONS.get(nucleotide[i : i + 3].upper(), "X")
@@ -1504,6 +1533,9 @@ def main(argv=None):
     p.add_argument("--sequences", required=False, help="Sequence nucleotide FASTA")
     p.add_argument("--scheme", required=True, choices=SCHEMES)
     p.add_argument("--mixcr", required=False, help="MiXCR exportAlignments TSV")
+    p.add_argument("--constant", required=False,
+                   help="MiXCR exportAlignments TSV from the C-boundary pass, for the C gene "
+                        "and isotype the domain-trimmed main align cannot see")
     p.add_argument("--out", required=True)
     p.add_argument("--out_sequences_tsv", required=False, help="One row per sequence, for the p-frame")
     p.add_argument("--out_pairs_tsv", required=False,
@@ -1535,6 +1567,7 @@ def main(argv=None):
     sequences = trace_report["sequences"]
     by_bucket = {b: read_anarci(getattr(args, "csv_%s" % b.lower())) for b in BUCKETS}
     aligned = read_mixcr(args.mixcr)
+    constant = read_constant(args.constant)
     nucleotides = read_fasta(args.sequences)
     peaks = json.loads(pathlib.Path(args.peaks).read_text()) if args.peaks else {}
 
@@ -1622,6 +1655,11 @@ def main(argv=None):
                 value = hit.get(field, "")
                 if value not in ("", "-"):
                     entry[field] = value
+            # The C gene, C hit and isotype come from the constant-boundary pass. The
+            # domain-trimmed main align has no constant region, so its copies above are
+            # empty; this fills them where the read's tail is a real constant.
+            for field, value in constant.get(chosen, {}).items():
+                entry[field] = value
             # `chains` is MiXCR's locus; it travels under its own entry name.
             if hit.get("chains", "") not in ("", "-"):
                 entry["mixcrChains"] = hit["chains"]

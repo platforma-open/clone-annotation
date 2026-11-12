@@ -5,8 +5,9 @@ exportSpecs := import(":export-specs")
 SEQUENCE_COLUMNS := 32
 // Two chains, V, D, J and C, each as a gene and as a hit with its allele.
 GENE_COLUMNS := 16
-// Two chains, each with isotype, productive, and twelve mutation columns.
-GERMLINE_COLUMNS := 28
+// Two chains, each with productive and twelve mutation columns, plus isotype on the
+// heavy side only (a light chain has no isotype).
+GERMLINE_COLUMNS := 27
 // Two chains, each with CDR3 nt/aa length, three junction lengths and total added.
 LENGTH_COLUMNS := 12
 // Two chains, each with a 5' and 3' flank length and an unusual-flank note.
@@ -34,9 +35,9 @@ TestVariantSettingsBuildEveryColumn := func() {
 	test.isEqual(SEQUENCE_COLUMNS, countOf(s, "pl7.app/vdj/sequence"))
 	test.isEqual(GENE_COLUMNS / 2, countOf(s, "pl7.app/vdj/geneHit"))
 	test.isEqual(GENE_COLUMNS / 2, countOf(s, "pl7.app/vdj/geneHitWithAllele"))
-	// Both chains carry an isotype, a productivity flag, and the V and J mutation
-	// counts and rates.
-	test.isEqual(2, countOf(s, "pl7.app/vdj/isotype"))
+	// Only the heavy chain carries an isotype; both carry a productivity flag and the V
+	// and J mutation counts and rates.
+	test.isEqual(1, countOf(s, "pl7.app/vdj/isotype"))
 	test.isEqual(2, countOf(s, "pl7.app/vdj/sequence/productive"))
 	test.isEqual(4, countOf(s, "pl7.app/vdj/sequence/nMutationsCount"))
 	test.isEqual(4, countOf(s, "pl7.app/vdj/sequence/nMutationsRate"))

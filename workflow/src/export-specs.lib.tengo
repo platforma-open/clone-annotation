@@ -68,8 +68,8 @@ LENGTHS := [
 // so these say how much real read it leaves out: the 5' leader (signal peptide / vector)
 // and the 3' tail (usually the constant region). Empty where the domain could not be placed.
 FLANKS := [
-	{ field: "flank5Nt", end: "5", label: "Read nt before the domain" },
-	{ field: "flank3Nt", end: "3", label: "Read nt after the domain" }
+	{ field: "flank5Nt", end: "5", label: "Read nt before the Domain" },
+	{ field: "flank3Nt", end: "3", label: "Read nt after the Domain" }
 ]
 
 // The ids in the Segments annotation markup, as mixcr-clonotyping maps them.
@@ -196,9 +196,6 @@ geneColumns := func(chains) {
 				{ column: g.gene, name: "pl7.app/vdj/geneHit", label: " Gene", visibility: "default" },
 				{ column: g.hit, name: "pl7.app/vdj/geneHitWithAllele", label: " Hit with Allele", visibility: "optional" }
 			] {
-				// The C gene was added for clonotyping parity; it stays optional
-				// like the other new columns, while V/D/J keep their default view.
-				visibility := g.reference == "CGene" ? "optional" : variant.visibility
 				columns = append(columns, {
 					column: SIDE[chain] + "_" + variant.column,
 					allowNA: true,
@@ -207,7 +204,7 @@ geneColumns := func(chains) {
 						valueType: "String",
 						domain: maps.merge({ "pl7.app/vdj/reference": g.reference },
 							chainDomain(chain)),
-						annotations: a(string(priority), visibility, {
+						annotations: a(string(priority), variant.visibility, {
 							"pl7.app/label": LABEL[chain] + " " + g.label + variant.label,
 							"pl7.app/isDiscreteFilter": "true"
 						})
@@ -222,26 +219,29 @@ geneColumns := func(chains) {
 
 // The germline columns MiXCR adds, per side: the constant region's class, whether
 // the chain is productive, and the somatic hypermutation of V and J. Named as
-// mixcr-clonotyping names them. A light chain has no isotype, so that cell is NA.
+// mixcr-clonotyping names them. Isotype is a heavy-chain property (IgG/IgM/...), so it
+// is emitted only for the heavy side; a light chain's class is its C gene (kappa/lambda).
 germlineColumns := func(chains) {
 	columns := []
 	priority := 44500
 	for chain in chains {
-		columns = append(columns, {
-			column: SIDE[chain] + "_isotype",
-			allowNA: true,
-			spec: {
-				name: "pl7.app/vdj/isotype",
-				valueType: "String",
-				domain: chainDomain(chain),
-				annotations: a(string(priority), "optional", {
-					"pl7.app/label": LABEL[chain] + " IG Isotype",
-					"pl7.app/isDiscreteFilter": "true",
-					"pl7.app/discreteValues": string(json.encode(ISOTYPES))
-				})
-			}
-		})
-		priority = priority - 10
+		if SIDE[chain] == "heavy" {
+			columns = append(columns, {
+				column: SIDE[chain] + "_isotype",
+				allowNA: true,
+				spec: {
+					name: "pl7.app/vdj/isotype",
+					valueType: "String",
+					domain: chainDomain(chain),
+					annotations: a(string(priority), "default", {
+						"pl7.app/label": LABEL[chain] + " Isotype",
+						"pl7.app/isDiscreteFilter": "true",
+						"pl7.app/discreteValues": string(json.encode(ISOTYPES))
+					})
+				}
+			})
+			priority = priority - 10
+		}
 
 		columns = append(columns, {
 			column: SIDE[chain] + "_productiveFlag",
@@ -356,7 +356,7 @@ flankColumns := func(chains) {
 				valueType: "String",
 				domain: chainDomain(chain),
 				annotations: a(string(priority), "optional", {
-					"pl7.app/label": LABEL[chain] + " Unusual flank",
+					"pl7.app/label": LABEL[chain] + " Extra Read Beyond Domain",
 					"pl7.app/isDiscreteFilter": "true"
 				})
 			}

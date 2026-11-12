@@ -1,11 +1,13 @@
-"""Trim each consensus to its antibody domain before MiXCR align.
+"""Trim each consensus to its antibody domain before the main MiXCR align.
 
 A Sanger read of an antibody construct runs from the signal peptide through the V domain
 and on into the constant region. With that 3' tail present, MiXCR over-extends V across the
 whole read and never aligns D or J, so CDR3, FR4 and the D and J genes come back as
 not-covered. ANARCI finds the domain by shape, so this cuts each read to the numbered
-domain plus a small margin, and MiXCR then aligns D and J normally. Only MiXCR's input is
-trimmed; the annotation and the viewer still use the full consensus.
+domain plus a small margin, and the main align then recovers D and J for every read,
+whatever the tail is (the constant alignment that would anchor it may be absent or vector).
+Only the main align's input is trimmed; the constant pass, the annotation and the viewer
+still use the full consensus.
 
 Usage: trim.py --sequences sequences.fasta --csv_h anarci_H.csv --csv_kl anarci_KL.csv --out trimmed.fasta
 """
@@ -45,7 +47,7 @@ def trim(nucleotide, best):
 def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--sequences", required=True, help="The consensus nucleotides, one per id")
-    p.add_argument("--out", required=True, help="The trimmed FASTA for MiXCR align")
+    p.add_argument("--out", required=True, help="The trimmed FASTA for the main MiXCR align")
     for bucket in BUCKETS:
         p.add_argument("--csv_%s" % bucket.lower(), required=False)
     args = p.parse_args(argv)
