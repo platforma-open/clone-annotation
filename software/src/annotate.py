@@ -393,25 +393,26 @@ def project_segments(markup, mixcr_vdj, own_vdj):
     return encode_markup((seg_id, s, e - s) for seg_id, s, e in out)
 
 
-def project_germline(window, own_vdj, min_overlap=MIN_GERMLINE_NT_OVERLAP):
+def project_germline(read, germline, own_vdj, min_overlap=MIN_GERMLINE_NT_OVERLAP):
     """A germline string aligned position-by-position to the block's own VDJRegion,
     for the viewer's mismatch track.
 
-    The window is the germline over the read, with `GERMLINE_GAP` where no gene is
-    templated. It and the block's own VDJRegion are the same molecule except at the
-    mutations, so their longest shared run fixes the offset (`own[i]` is
-    `window[i + offset]`). Positions the window does not cover stay `GERMLINE_GAP`,
-    which the viewer draws as "no germline" rather than a match. Returns "" when the
-    window does not line up.
+    `germline` is the germline over the read, position-by-position with `read` and
+    `GERMLINE_GAP` where no gene is templated. The offset is found from the read, not the
+    germline: the read and the block's own VDJRegion are the same sample, so their longest
+    shared run is the whole overlap, while the germline breaks from the read at every
+    mutation and on a heavily mutated read would share too little to place. `own[i]` is
+    `germline[i + offset]`. Positions not covered stay `GERMLINE_GAP`. Returns "" when the
+    read does not line up.
     """
-    offset = _longest_match_offset(window, own_vdj, min_overlap)
+    offset = _longest_match_offset(read, own_vdj, min_overlap)
     if offset is None:
         return ""
     out = [GERMLINE_GAP] * len(own_vdj)
     for i in range(len(out)):
         p = i + offset
-        if 0 <= p < len(window):
-            out[i] = window[p]
+        if 0 <= p < len(germline):
+            out[i] = germline[p]
     return "".join(out)
 
 
@@ -546,8 +547,9 @@ def segments_from_alignments(read, genes, own_vdj, min_overlap=MIN_GERMLINE_NT_O
     """
     if not read or not own_vdj:
         return ""
-    over_read = reconstruct_germline_over_read(read, [a for _, a in genes])
-    offset = _longest_match_offset(over_read, own_vdj, min_overlap)
+    # The read and the block's VDJRegion are the same sample, so the offset is found from
+    # the read, not the germline (which breaks from the read at every mutation).
+    offset = _longest_match_offset(read, own_vdj, min_overlap)
     if offset is None:
         return ""
     n = len(own_vdj)
@@ -1658,7 +1660,7 @@ def main(argv=None):
             # shows a match, the germline base a difference, a gap where no gene is
             # templated (the junction, the flanks).
             over_read = reconstruct_germline_over_read(read, [a for _, a in genes])
-            germline = project_germline(over_read, own_vdj)
+            germline = project_germline(read, over_read, own_vdj)
             if germline:
                 entry["germlineNt"] = germline
                 entry["germlineAa"] = translate_germline(germline)

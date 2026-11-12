@@ -68,8 +68,8 @@ LENGTHS := [
 // so these say how much real read it leaves out: the 5' leader (signal peptide / vector)
 // and the 3' tail (usually the constant region). Empty where the domain could not be placed.
 FLANKS := [
-	{ field: "flank5Nt", label: "Read nt before the domain" },
-	{ field: "flank3Nt", label: "Read nt after the domain" }
+	{ field: "flank5Nt", end: "5", label: "Read nt before the domain" },
+	{ field: "flank3Nt", end: "3", label: "Read nt after the domain" }
 ]
 
 // The ids in the Segments annotation markup, as mixcr-clonotyping maps them.
@@ -334,7 +334,12 @@ flankColumns := func(chains) {
 				spec: {
 					name: "pl7.app/vdj/readFlankLength",
 					valueType: "Int",
-					domain: maps.merge({ "pl7.app/alphabet": "nucleotide" }, chainDomain(chain)),
+					// The end the length measures from, so the 5' and 3' columns are told
+					// apart by their spec, not only by their label.
+					domain: maps.merge({
+						"pl7.app/alphabet": "nucleotide",
+						"pl7.app/vdj/readFlankEnd": fl.end
+					}, chainDomain(chain)),
 					annotations: a(string(priority), "optional", {
 						"pl7.app/label": LABEL[chain] + " " + fl.label
 					})

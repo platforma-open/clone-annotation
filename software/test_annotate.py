@@ -414,42 +414,55 @@ def test_segments_empty_when_the_regions_do_not_line_up():
 
 def test_germline_marks_substitutions_and_gaps_the_uncovered_flank():
     from annotate import project_germline, GERMLINE_GAP
-    # Ten FR1-like bases before the V germline window. The window covers the last
-    # forty positions; germline differs from the sample at window position 5.
+    # Ten FR1-like bases before the domain. The read (the sample) covers the last forty
+    # positions; the germline over it differs from the sample at position 5.
     own_vdj = "GGGGGGGGGG" + _SEG_CORE
-    germline_window = _SEG_CORE[:5] + "A" + _SEG_CORE[6:]
-    out = project_germline(germline_window, own_vdj)
+    read = _SEG_CORE
+    germline = _SEG_CORE[:5] + "A" + _SEG_CORE[6:]
+    out = project_germline(read, germline, own_vdj)
     check("germline string has the region's length", len(out), len(own_vdj))
     check("the uncovered flank is a gap, not a match", out[:10], GERMLINE_GAP * 10)
-    check("the covered span carries the germline, differences included",
-          out[10:], germline_window)
+    check("the covered span carries the germline, differences included", out[10:], germline)
 
 
 def test_germline_covered_span_carries_matches_too():
     from annotate import project_germline, GERMLINE_GAP
-    # No mutations: the covered span carries the window (equal to the sample, drawn as
+    # No mutations: the covered span carries the germline (equal to the sample, drawn as
     # matches), and the two uncovered bases before it are a gap.
-    out = project_germline(_SEG_CORE, "GG" + _SEG_CORE)
+    out = project_germline(_SEG_CORE, _SEG_CORE, "GG" + _SEG_CORE)
     check("uncovered prefix is a gap", out[:2], GERMLINE_GAP * 2)
-    check("covered span carries the window", out[2:], _SEG_CORE)
+    check("covered span carries the germline", out[2:], _SEG_CORE)
 
 
 def test_germline_carries_a_gap_in_the_window_through():
     from annotate import project_germline, GERMLINE_GAP
-    # A gap inside the window (the junction, filled by reconstruct) is kept, not turned
-    # into a match, once the window is projected onto the block's VDJRegion.
-    window = _SEG_CORE[:20] + GERMLINE_GAP * 5 + _SEG_CORE[25:]
-    out = project_germline(window, "GG" + _SEG_CORE)
-    check("the gap inside the window survives the projection",
+    # A gap inside the germline (the junction) is kept, not turned into a match, once the
+    # germline is projected onto the block's VDJRegion.
+    read = _SEG_CORE
+    germline = _SEG_CORE[:20] + GERMLINE_GAP * 5 + _SEG_CORE[25:]
+    out = project_germline(read, germline, "GG" + _SEG_CORE)
+    check("the gap inside the germline survives the projection",
           out[2 + 20:2 + 25], GERMLINE_GAP * 5)
+
+
+def test_germline_places_a_heavily_mutated_read_via_the_read():
+    from annotate import project_germline
+    # The germline differs from the sample every third base, so no long germline run matches
+    # own_vdj; matching the germline would place nothing. The read is the sample and matches
+    # own_vdj fully, so the offset from the read still places the germline.
+    own_vdj = "GG" + _SEG_CORE
+    read = _SEG_CORE
+    germline = "".join(("T" if c != "T" else "A") if i % 3 == 0 else c
+                       for i, c in enumerate(_SEG_CORE))
+    out = project_germline(read, germline, own_vdj)
+    check("a heavily mutated read still places, via the read offset", out[2:], germline)
 
 
 def test_germline_empty_when_it_does_not_line_up():
     from annotate import project_germline
-    check("an unrelated germline yields nothing",
-          project_germline("C" * 20, "A" * 40), "")
-    check("no germline window yields nothing",
-          project_germline("", _SEG_CORE), "")
+    check("a read unrelated to the region yields nothing",
+          project_germline("C" * 20, "C" * 20, "A" * 40), "")
+    check("no read yields nothing", project_germline("", "", _SEG_CORE), "")
 
 
 def test_parse_alignment_reads_ranges_and_mutations():
