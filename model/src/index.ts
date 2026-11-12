@@ -428,14 +428,20 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
    * would put every clone in twice. The reads are one `.ab1` per variant and chain.
    */
   .plugin(sequenceViewer, {
-    anchorColumns: (ctx) =>
-      ctx.outputs
+    anchorColumns: (ctx) => {
+      const columns = ctx.outputs
         ?.resolve({ field: "variants", allowPermanentAbsence: true })
         ?.getPColumns()
-        ?.filter((c) => c.spec.axesSpec.length === 1),
+        ?.filter((c) => c.spec.axesSpec.length === 1);
+      return columns && { columns, isFinal: true };
+    },
     sources: () => [],
-    traceFiles: (ctx) =>
-      ctx.outputs?.resolve({ field: "traceFiles", allowPermanentAbsence: true })?.getPColumns(),
+    traceFiles: (ctx) => {
+      const columns = ctx.outputs
+        ?.resolve({ field: "traceFiles", allowPermanentAbsence: true })
+        ?.getPColumns();
+      return columns && { columns, isFinal: true };
+    },
   })
 
   // Each trace arrives with the path the pattern is matched against, computed

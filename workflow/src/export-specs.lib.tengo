@@ -63,6 +63,18 @@ LENGTHS := [
 	{ field: "djJunctionLen", feature: "DJJunction", alphabet: "nucleotide", na: "^[a-z_]*$", label: "Length of DJ Junction nt" },
 	{ field: "totalAddedNt", alphabet: "nucleotide", na: "^[a-z_]*$", label: "Total Number of Added nt" }
 ]
+
+// Read nucleotides outside the domain, per side. The clone sequence is the domain only,
+// so these say how much real read it leaves out: the 5' leader (signal peptide / vector)
+// and the 3' tail (usually the constant region). Empty where the domain could not be placed.
+FLANKS := [
+	{ field: "flank5Nt", label: "Read nt before the domain" },
+	{ field: "flank3Nt", label: "Read nt after the domain" }
+]
+
+// The ids in the Segments annotation markup, as mixcr-clonotyping maps them.
+SEGMENTS_MAPPING := "{\"1\":\"V\",\"2\":\"D\",\"3\":\"J\",\"4\":\"C\"}"
+
 SUMMARY_LABEL := { min: "Min", median: "Median", max: "Max", mean: "Mean" }
 
 a := func(priority, visibility, extra) {
@@ -89,8 +101,18 @@ keyAxis := func(blockId) {
 			domain: {
 				"pl7.app/blockId": blockId,
 				"pl7.app/modality": "vdj",
+				// The key hashes the nucleotide VDJRegion of both chains.
+				"pl7.app/alphabet": "nucleotide",
+				"pl7.app/identitySource": "derived",
 				"pl7.app/vdj/receptor": RECEPTOR,
-				// Kept until consumers read pl7.app/modality: clonotype-space, cdr3-spectratype
+				"pl7.app/vdj/resolution": "receptor",
+				// The chains are paired by the well, not seen together in a cell.
+				"pl7.app/vdj/pairing": "declared",
+				// The key always hashes a heavy and a light slot (one may be empty),
+				// so the axis is a Heavy+Light receptor key whatever sides a run holds.
+				"pl7.app/vdj/receptorChains": "Heavy+Light",
+				"pl7.app/vdj/identityComponents": "VDJRegion~;VDJRegion~",
+				// Kept until consumers read the keys above: clonotype-space, cdr3-spectratype
 				// and vj-gene-usage tell an antibody variantKey axis apart by this key.
 				"pl7.app/vdj/clonotypingRunId": blockId
 			},
@@ -297,6 +319,114 @@ lengthColumns := func(chains) {
 	return columns
 }
 
+// How much read sits outside the domain, per side (nucleotides), plus a note marking a
+// flank larger than a V-plus-constant read explains. For traceability: the clone sequence
+// is the domain only, so these show what real read it leaves out.
+flankColumns := func(chains) {
+	columns := []
+	priority := 42500
+	for chain in chains {
+		for fl in FLANKS {
+			columns = append(columns, {
+				column: SIDE[chain] + "_" + fl.field,
+				allowNA: true,
+				naRegex: "^$",
+				spec: {
+					name: "pl7.app/vdj/readFlankLength",
+					valueType: "Int",
+					domain: maps.merge({ "pl7.app/alphabet": "nucleotide" }, chainDomain(chain)),
+					annotations: a(string(priority), "optional", {
+						"pl7.app/label": LABEL[chain] + " " + fl.label
+					})
+				}
+			})
+			priority = priority - 10
+		}
+		columns = append(columns, {
+			column: SIDE[chain] + "_unusualFlank",
+			allowNA: true,
+			naRegex: "^$",
+			spec: {
+				name: "pl7.app/vdj/readFlankNote",
+				valueType: "String",
+				domain: chainDomain(chain),
+				annotations: a(string(priority), "optional", {
+					"pl7.app/label": LABEL[chain] + " Unusual flank",
+					"pl7.app/isDiscreteFilter": "true"
+				})
+			}
+		})
+		priority = priority - 10
+	}
+	return columns
+}
+
+// The V/D/J/C coverage markup the sequence viewer reads, one per side. Hidden: it
+// is machine-readable markup, not a table value. The value is a base-36 span
+// string on the nucleotide VDJRegion; the mapping names each id's segment.
+annotationColumns := func(chains) {
+	columns := []
+	priority := 43000
+	for chain in chains {
+		columns = append(columns, {
+			column: SIDE[chain] + "_segmentsNt",
+			allowNA: true,
+			naRegex: "region_not_covered",
+			spec: {
+				name: "pl7.app/vdj/sequence/annotation",
+				valueType: "String",
+				domain: maps.merge({
+					"pl7.app/vdj/feature": "VDJRegion",
+					"pl7.app/alphabet": "nucleotide",
+					"pl7.app/sequence/annotation/type": "Segments"
+				}, chainDomain(chain)),
+				annotations: a(string(priority), "hidden", {
+					"pl7.app/label": LABEL[chain] + " V/D/J/C Segments",
+					"pl7.app/sequence/isAnnotation": "true",
+					"pl7.app/sequence/annotation/mapping": SEGMENTS_MAPPING
+				})
+			}
+		})
+		priority = priority - 10
+	}
+	return columns
+}
+
+// The germline over each chain's VDJRegion, one per side and alphabet, for the
+// viewer's mismatch tracks. Hidden: it is read position-by-position against the
+// sequence, not shown as a table value. The sample's own residue where it matches
+// germline, the germline residue where it differs, a gap where no gene is templated.
+GERMLINE_SEQUENCES := [
+	{ field: "germlineNt", alphabet: "nucleotide", label: "Germline nt" },
+	{ field: "germlineAa", alphabet: "aminoacid", label: "Germline aa" }
+]
+
+germlineSequenceColumns := func(chains) {
+	columns := []
+	priority := 42000
+	for chain in chains {
+		for g in GERMLINE_SEQUENCES {
+			columns = append(columns, {
+				column: SIDE[chain] + "_" + g.field,
+				allowNA: true,
+				spec: {
+					name: "pl7.app/vdj/germlineSequence",
+					valueType: "String",
+					domain: maps.merge({
+						"pl7.app/vdj/feature": "VDJRegion",
+						"pl7.app/alphabet": g.alphabet
+					}, chainDomain(chain)),
+					annotations: a(string(priority), "hidden", {
+						"pl7.app/label": LABEL[chain] + " " + g.label
+					})
+				}
+			})
+			priority = priority - 10
+		}
+	}
+	return columns
+}
+
 // No vocabulary covers "could these two chains be held together", so the name
 // is this block's own. It is a discrete filter, which is how a consumer keeps
 // the ambiguous records out without this block having dropped them.
@@ -447,6 +577,9 @@ variantSettings := func(blockId, properties, scheme, sides) {
 	columns = addAll(columns, geneColumns(chains))
 	columns = addAll(columns, germlineColumns(chains))
 	columns = addAll(columns, lengthColumns(chains))
+	columns = addAll(columns, flankColumns(chains))
+	columns = addAll(columns, annotationColumns(chains))
+	columns = addAll(columns, germlineSequenceColumns(chains))
 	columns = addAll(columns, propertyColumns(properties))
 	return {
 		axes: [keyAxis(blockId)],

@@ -132,6 +132,7 @@ wf.body(func(args) {
 		anarciSw := assets.importSoftware("@platforma-open/milaboratories.software-anarci:main")
 		mixcrSw := assets.importSoftware("@platforma-open/milaboratories.software-mixcr:main")
 		annotateSw := assets.importSoftware("@platforma-open/milaboratories.clone-annotation.software:annotate")
+		trimSw := assets.importSoftware("@platforma-open/milaboratories.clone-annotation.software:trim")
 
 		// ANARCI recognises a variable domain by its shape, so it needs no
 		// reference. The six frames go in and the one that is a domain comes
@@ -153,13 +154,33 @@ wf.body(func(args) {
 			inMediumQueue().
 			run()
 
+		// Cut each consensus to its ANARCI domain before MiXCR. A read of an antibody
+		// construct runs from the signal peptide through the domain and on into the
+		// constant region; with that tail present MiXCR over-extends V and aligns no D or
+		// J. ANARCI already found the domain, so this cuts the read to it and MiXCR then
+		// aligns D and J normally. Only MiXCR's input is trimmed; the annotation and the
+		// viewer still use the full consensus. So ANARCI now runs before MiXCR.
+		trimmed := exec.builder().
+			software(trimSw).
+			addFile(tracy.nucleotideName, result.getFile(tracy.nucleotideName)).
+			addFile("anarci_H.csv", anarci.getFile("anarci_H.csv")).
+			addFile("anarci_KL.csv", anarci.getFile("anarci_KL.csv")).
+			arg("--sequences").arg(tracy.nucleotideName).
+			arg("--csv_h").arg("anarci_H.csv").
+			arg("--csv_kl").arg("anarci_KL.csv").
+			arg("--out").arg("trimmed.fasta").
+			saveFile("trimmed.fasta").
+			printErrStreamToStdout().
+			inMediumQueue().
+			run()
+
 		// MiXCR adds the germline, and only where a library covers the
-		// material. Nothing above depends on it.
+		// material. Nothing below depends on it.
 		align := exec.builder().
 			software(mixcrSw).
 			env("MI_USE_SYSTEM_CA", "true").
 			secret("MI_LICENSE", "MI_LICENSE").
-			addFile(tracy.nucleotideName, result.getFile(tracy.nucleotideName)).
+			addFile("trimmed.fasta", trimmed.getFile("trimmed.fasta")).
 			arg("align").
 			arg("-p").arg("generic-amplicon").
 			arg("--species").arg(species).
@@ -169,6 +190,9 @@ wf.body(func(args) {
 			// primer. Passing the flag bare makes it swallow the next argument,
 			// and MiXCR then exits 2 with its usage text.
 			arg("--floating-right-alignment-boundary").arg("J").
+			// Required by the generic-amplicon preset: its bundle fails validation at
+			// align time without an assembling feature, even though this block runs no
+			// assemble step. CDR3 is the standard choice.
 			arg("--assemble-clonotypes-by").arg("CDR3").
 			// Without this the FASTA header is thrown away during alignment and
 			// `-descrsR1` has nothing to export, so the join loses its key.
@@ -178,7 +202,7 @@ wf.body(func(args) {
 			// real plate from the germline half without saying so.
 			arg("--keep-non-CDR3-alignments").
 			arg("--threads").argExpr("{system.cpu}").
-			arg(tracy.nucleotideName).
+			arg("trimmed.fasta").
 			arg("alignments.vdjca").
 			saveFile("alignments.vdjca").
 			printErrStreamToStdout().
@@ -219,8 +243,22 @@ wf.body(func(args) {
 			arg("-nMutationsCount").arg("{FR1Begin:FR3End},FR4").
 			arg("-aaMutationsCount").arg("CDR1,CDR2").
 			arg("-aaMutationsCount").arg("FR1,FR2,FR3,FR4").
+			arg("-nLength").arg("VJJunction").
+			arg("-nLength").arg("VDJunction").
+			arg("-nLength").arg("DJJunction").
+			// V/D/J/C coverage markup for the viewer, re-based onto the block's own
+			// VDJRegion. The window is CDR1Begin:CDR3End, not VDJRegion: reads start
+			// inside FR1, so MiXCR marks the whole VDJRegion uncovered but still covers
+			// CDR1 through CDR3. annotate.py extends V over FR1 and J over the tail.
+			arg("-nFeature").arg("{CDR1Begin:CDR3End}").
+			arg("-nAnnotationString").arg("Segments").arg("{CDR1Begin:CDR3End}").
+			// Raw V/D/J alignments and the read, for the germline mismatch track.
+			// annotate.py rebuilds the germline from these; the feature-based germline
+			// export cannot reach CDR3, but the alignments cover it.
 			arg("-vHitScore").
 			arg("-vAlignment").
+			arg("-dAlignment").
+			arg("-jAlignment").
 			arg("alignments.vdjca").
 			arg("alignments.tsv").
 			saveFile("alignments.tsv").

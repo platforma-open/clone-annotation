@@ -9,6 +9,12 @@ GENE_COLUMNS := 16
 GERMLINE_COLUMNS := 28
 // Two chains, each with CDR3 nt/aa length, three junction lengths and total added.
 LENGTH_COLUMNS := 12
+// Two chains, each with a 5' and 3' flank length and an unusual-flank note.
+FLANK_COLUMNS := 6
+// Two chains, each with a V/D/J/C segments annotation.
+ANNOTATION_COLUMNS := 2
+// Two chains, each with a germline nucleotide and amino-acid sequence for the mismatch tracks.
+GERMLINE_SEQUENCE_COLUMNS := 4
 // Clone Id, wells and pairing.
 FIXED_COLUMNS := 3
 
@@ -24,7 +30,7 @@ countOf := func(settings, name) {
 
 TestVariantSettingsBuildEveryColumn := func() {
 	s := exportSpecs.variantSettings("blk", undefined, "imgt", undefined)
-	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + GERMLINE_COLUMNS + LENGTH_COLUMNS + FIXED_COLUMNS, len(s.columns))
+	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + GERMLINE_COLUMNS + LENGTH_COLUMNS + FLANK_COLUMNS + ANNOTATION_COLUMNS + GERMLINE_SEQUENCE_COLUMNS + FIXED_COLUMNS, len(s.columns))
 	test.isEqual(SEQUENCE_COLUMNS, countOf(s, "pl7.app/vdj/sequence"))
 	test.isEqual(GENE_COLUMNS / 2, countOf(s, "pl7.app/vdj/geneHit"))
 	test.isEqual(GENE_COLUMNS / 2, countOf(s, "pl7.app/vdj/geneHitWithAllele"))
@@ -37,6 +43,28 @@ TestVariantSettingsBuildEveryColumn := func() {
 	test.isEqual(2, countOf(s, "pl7.app/vdj/sequence/fractionCDRMutations"))
 	// Both chains carry the six length columns.
 	test.isEqual(LENGTH_COLUMNS, countOf(s, "pl7.app/vdj/sequenceLength"))
+	// Both chains carry a 5' and 3' flank length and an unusual-flank note.
+	test.isEqual(4, countOf(s, "pl7.app/vdj/readFlankLength"))
+	test.isEqual(2, countOf(s, "pl7.app/vdj/readFlankNote"))
+	// Both chains carry a segments annotation.
+	test.isEqual(ANNOTATION_COLUMNS, countOf(s, "pl7.app/vdj/sequence/annotation"))
+	// Both chains carry a germline sequence for the mismatch track.
+	test.isEqual(GERMLINE_SEQUENCE_COLUMNS, countOf(s, "pl7.app/vdj/germlineSequence"))
+}
+
+TestTheSegmentsAnnotationMatchesTheViewerContract := func() {
+	s := exportSpecs.variantSettings("blk", undefined, "imgt", ["heavy"])
+	for c in s.columns {
+		if c.column == "heavy_segmentsNt" {
+			test.isEqual("pl7.app/vdj/sequence/annotation", c.spec.name)
+			test.isEqual("VDJRegion", c.spec.domain["pl7.app/vdj/feature"])
+			test.isEqual("nucleotide", c.spec.domain["pl7.app/alphabet"])
+			test.isEqual("Segments", c.spec.domain["pl7.app/sequence/annotation/type"])
+			test.isEqual("A", c.spec.domain["pl7.app/vdj/scClonotypeChain"])
+			test.isEqual("true", c.spec.annotations["pl7.app/sequence/isAnnotation"])
+			test.isEqual("hidden", c.spec.annotations["pl7.app/table/visibility"])
+		}
+	}
 }
 
 TestMutationColumnsMatchClonotyping := func() {
@@ -86,6 +114,27 @@ TestTheKeyAxisNamesItsRunAndModality := func() {
 	test.isEqual("blk", domain["pl7.app/vdj/clonotypingRunId"])
 }
 
+TestTheKeyAxisCarriesTheVdjShape := func() {
+	domain := exportSpecs.variantSettings("blk", undefined, "imgt", undefined).axes[0].spec.domain
+	test.isEqual("nucleotide", domain["pl7.app/alphabet"])
+	test.isEqual("derived", domain["pl7.app/identitySource"])
+	test.isEqual("IG", domain["pl7.app/vdj/receptor"])
+	test.isEqual("receptor", domain["pl7.app/vdj/resolution"])
+	test.isEqual("declared", domain["pl7.app/vdj/pairing"])
+	test.isEqual("Heavy+Light", domain["pl7.app/vdj/receptorChains"])
+	test.isEqual("VDJRegion~;VDJRegion~", domain["pl7.app/vdj/identityComponents"])
+}
+
+// The variants, abundance and trace-file frames must share one axis, so the axis
+// spec each builds has to be identical.
+TestEveryFrameSharesTheKeyAxis := func() {
+	variant := exportSpecs.variantSettings("blk", undefined, "imgt", undefined).axes[0].spec
+	abundance := exportSpecs.abundanceSettings("blk").axes[1].spec
+	trace := exportSpecs.traceFileColumn("blk", "heavy").axesSpec[0]
+	test.isEqual(variant.domain, abundance.domain)
+	test.isEqual(variant.domain, trace.domain)
+}
+
 TestTheChainsAreSeparatedByDomainNotByAxis := func() {
 	s := exportSpecs.variantSettings("blk", undefined, "imgt", undefined)
 	sides := {}
@@ -118,13 +167,13 @@ TestAPropertyBringsItsValuesAndItsSummaries := func() {
 	props := [{ name: "elisa", type: "Double", values: {} }]
 	s := exportSpecs.variantSettings("blk", props, "imgt", undefined)
 	// values, disagrees, and four summaries.
-	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + GERMLINE_COLUMNS + LENGTH_COLUMNS + FIXED_COLUMNS + 6, len(s.columns))
+	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + GERMLINE_COLUMNS + LENGTH_COLUMNS + FLANK_COLUMNS + ANNOTATION_COLUMNS + GERMLINE_SEQUENCE_COLUMNS + FIXED_COLUMNS + 6, len(s.columns))
 }
 
 TestALabelGetsNoSummaries := func() {
 	props := [{ name: "note", type: "String", values: {} }]
 	s := exportSpecs.variantSettings("blk", props, "imgt", undefined)
-	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + GERMLINE_COLUMNS + LENGTH_COLUMNS + FIXED_COLUMNS + 2, len(s.columns))
+	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + GERMLINE_COLUMNS + LENGTH_COLUMNS + FLANK_COLUMNS + ANNOTATION_COLUMNS + GERMLINE_SEQUENCE_COLUMNS + FIXED_COLUMNS + 2, len(s.columns))
 }
 
 TestAbundanceCarriesTheSampleAxisFirst := func() {
