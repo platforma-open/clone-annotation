@@ -121,7 +121,7 @@ function onListClick(e: MouseEvent) {
   display: flex;
   padding: 8px 0 4px;
   align-items: center;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   text-transform: uppercase;
 }
@@ -141,7 +141,7 @@ function onListClick(e: MouseEvent) {
 
 .fileList summary {
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   line-height: 28px;
 }
@@ -189,14 +189,15 @@ function onListClick(e: MouseEvent) {
   padding: 0;
   color: var(--txt-link, #5f31cc);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 400;
 }
 
 .fileList pre {
-  line-height: 22px;
+  line-height: 24px;
   margin: 0;
   font-family: var(--font-family-monospace);
+  font-size: 16px;
 }
 
 .fileList pre span {
