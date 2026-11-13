@@ -13,6 +13,7 @@ Usage: annotate.py --report report.json --scheme imgt --out annotation.json
 import argparse
 import base64
 import csv
+import difflib
 import hashlib
 import json
 import pathlib
@@ -55,6 +56,14 @@ DOMAIN_MIXED_LIMIT = 15
 # clipped even though CDR3 and the genes are sound.
 MIN_FR1 = 20
 MIN_FR4 = 9
+
+# A read runs from the signal peptide through the V domain and on into the constant region,
+# so most reads carry a 3' tail the domain view leaves out. `flank5Nt`/`flank3Nt` report how
+# much read sits outside the VDJRegion on each side, so nothing the clone omits is hidden.
+# A combined flank larger than a V-plus-constant read explains is unusual and gets a note: it
+# can mean a second domain (an scFv read through the linker) or vector past the constant. The
+# threshold is a guide, not a rule, and the flag is information, not a fault.
+FLANK_UNUSUAL_NT = 230
 
 PASSED = "Passed"
 WARNING = "Warning"
@@ -230,12 +239,337 @@ MIXCR_FIELDS = {
     "vGene": "bestVGene",
     "dGene": "bestDGene",
     "jGene": "bestJGene",
+    "cGene": "bestCGene",
     "vHit": "bestVHit",
     "dHit": "bestDHit",
     "jHit": "bestJHit",
+    "cHit": "bestCHit",
+    "isotype": "isotypePrimary",
     "vScore": "bestVHitScore",
+    # The V/D/J alignments and the read, for the germline mismatch track. MiXCR's
+    # germline feature export cannot render CDR3; the alignments carry the per-gene
+    # ranges and mutations needed to rebuild it.
     "vAlignment": "bestVAlignment",
+    "dAlignment": "bestDAlignment",
+    "jAlignment": "bestJAlignment",
+    "readSequence": "targetSequences",
 }
+
+# The V/D/J/C coverage markup is read by prefix, not a fixed name: MiXCR renames the
+# window feature in the header (e.g. `{CDR1Begin:CDR3End}` becomes `CDR1_TO_CDR3`).
+# read_mixcr finds the one `nAnnotationOfSegmentsFor...` column and pairs it with its
+# `nSeq...`.
+MIXCR_SEGMENTS_PREFIX = "nAnnotationOfSegmentsFor"
+
+# The gene features MiXCR counts mutations over, matching mixcr-clonotyping so the
+# columns mean the same thing. A read that does not cover a feature gets MiXCR's
+# not-covered token, which the p-column spec turns into NA.
+V_CORE = "{FR1Begin:FR3End}"
+J_CORE = "FR4"
+
+# MiXCR writes each of these under a header that joins the field and the gene
+# feature with no separator, for example "nMutationsCount{FR1Begin:FR3End}" or
+# "nMutationsCountFR4". The feature strings here must match the arguments the
+# workflow passes to exportAlignments. read_mixcr finds each column by joining
+# them; if the header format ever differs it reports the real headers instead of
+# guessing (see read_mixcr).
+MIXCR_PARAM_FIELDS = {
+    "vNtMutCount": ("nMutationsCount", V_CORE),
+    "vNtMutRate": ("nMutationsRate", V_CORE),
+    "vAaMutCount": ("aaMutationsCount", V_CORE),
+    "vAaMutRate": ("aaMutationsRate", V_CORE),
+    "jNtMutCount": ("nMutationsCount", J_CORE),
+    "jNtMutRate": ("nMutationsRate", J_CORE),
+    "jAaMutCount": ("aaMutationsCount", J_CORE),
+    "jAaMutRate": ("aaMutationsRate", J_CORE),
+    "nMutations": ("nMutationsCount", V_CORE + "," + J_CORE),
+    "nAaMutCDR": ("aaMutationsCount", "CDR1,CDR2"),
+    "nAaMutFWR": ("aaMutationsCount", "FR1,FR2,FR3,FR4"),
+    "vjJunctionLen": ("nLength", "VJJunction"),
+    "vdJunctionLen": ("nLength", "VDJunction"),
+    "djJunctionLen": ("nLength", "DJJunction"),
+}
+
+
+def _to_number(value):
+    """A mutation count or rate as a number, or None for empty / not-covered."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+# The germline and mutation fields added for mixcr-clonotyping parity, in one
+# place so the sequence table's header and row cannot drift apart. `productive`
+# is not here: the sequence table already carries it.
+MIXCR_EXTRA_COLUMNS = ["cGene", "cHit", "isotype",
+                       "vNtMutCount", "vNtMutRate", "vAaMutCount", "vAaMutRate",
+                       "jNtMutCount", "jNtMutRate", "jAaMutCount", "jAaMutRate",
+                       "nMutations", "nAaMutCDR", "nAaMutFWR", "fractionCDRMutations"]
+
+
+# The sequence viewer reads V/D/J/C coverage from a markup string,
+# "<id>:<start>+<length>|...", start and length in base 36, positions on the
+# sequence it marks. MiXCR writes this for its own VDJRegion; the block re-bases
+# it onto its own VDJRegion, in nucleotides.
+_B36 = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+# The shared run two VDJRegions of the same molecule must have before their
+# offset is trusted. One codon is far too little; a real pair shares most of the
+# region, so this only rejects sequences that do not correspond at all.
+MIN_SEGMENT_OVERLAP = 30
+
+# The germline-over-read and the block's VDJRegion are the same molecule, but every
+# mutation breaks their shared run, so on a heavily mutated V the longest clean run is
+# short. This is low enough to still place it, high enough to reject a read that does
+# not correspond at all.
+MIN_GERMLINE_NT_OVERLAP = 9
+
+# Marks a position the germline does not cover — the non-templated CDR3 junction and
+# the flanks. The viewer draws it as "no germline" so a gap is not read as a match.
+GERMLINE_GAP = "."
+
+
+def _to_b36(n):
+    if n <= 0:
+        return "0"
+    out = ""
+    while n > 0:
+        out = _B36[n % 36] + out
+        n //= 36
+    return out
+
+
+def parse_markup(value):
+    """The (id, start, length) spans of a markup string. Unreadable parts are skipped."""
+    entries = []
+    for part in (value or "").split("|"):
+        m = re.match(r"^([^:]*):([0-9A-Za-z]+)(?:\+([0-9A-Za-z]+))?$", part)
+        if m:
+            length = int(m.group(3), 36) if m.group(3) else 1
+            entries.append((m.group(1), int(m.group(2), 36), length))
+    return entries
+
+
+def encode_markup(entries):
+    return "|".join("%s:%s+%s" % (i, _to_b36(s), _to_b36(n)) for i, s, n in entries)
+
+
+def project_segments(markup, mixcr_vdj, own_vdj):
+    """MiXCR's V/D/J/C spans, moved from the window MiXCR measured them on onto
+    the block's own VDJRegion, clipped to it, and stretched to cover the frame.
+
+    The window is CDR1Begin:FR4End, so it is a substring of the block's VDJRegion
+    offset by FR1. They are the same molecule, so they share a long run, but
+    neither need be a substring of the other: the block's VDJRegion is built
+    codon by codon from ANARCI's numbering, so it is a whole number of codons,
+    while MiXCR's window is not, and the two are trimmed differently at each end.
+    The longest shared run fixes the offset and tolerates staggered ends and the
+    odd differing base. `own[i]` is `mixcr[i + offset]`.
+
+    FR1 sits before the window and is part of V; FR4 may run past it and is part
+    of J. So the first span is stretched to the start of the block's region and
+    the last to its end, which is what shows the whole chain as V(D)J. Returns ""
+    when too little is shared to line them up, so a true mismatch shows nothing
+    rather than a wrong span.
+    """
+    if not markup:
+        return ""
+    offset = _longest_match_offset(mixcr_vdj, own_vdj, MIN_SEGMENT_OVERLAP)
+    if offset is None:
+        return ""
+    n = len(own_vdj)
+    out = []
+    for seg_id, start, length in parse_markup(markup):
+        s = max(0, start - offset)
+        e = min(n, start - offset + length)
+        if e > s:
+            out.append([seg_id, s, e])
+    if not out:
+        return ""
+    out.sort(key=lambda span: span[1])
+    out[0][1] = 0
+    out[-1][2] = n
+    return encode_markup((seg_id, s, e - s) for seg_id, s, e in out)
+
+
+def project_germline(read, germline, own_vdj, min_overlap=MIN_GERMLINE_NT_OVERLAP):
+    """A germline string aligned position-by-position to the block's own VDJRegion,
+    for the viewer's mismatch track.
+
+    `germline` is the germline over the read, position-by-position with `read` and
+    `GERMLINE_GAP` where no gene is templated. The offset is found from the read, not the
+    germline: the read and the block's own VDJRegion are the same sample, so their longest
+    shared run is the whole overlap, while the germline breaks from the read at every
+    mutation and on a heavily mutated read would share too little to place. `own[i]` is
+    `germline[i + offset]`. Positions not covered stay `GERMLINE_GAP`. Returns "" when the
+    read does not line up.
+    """
+    offset = _longest_match_offset(read, own_vdj, min_overlap)
+    if offset is None:
+        return ""
+    out = [GERMLINE_GAP] * len(own_vdj)
+    for i in range(len(out)):
+        p = i + offset
+        if 0 <= p < len(germline):
+            out[i] = germline[p]
+    return "".join(out)
+
+
+def _longest_match_offset(window, own_vdj, min_overlap):
+    """The offset that lines a read-coordinate string up with the block's own VDJRegion:
+    `own[i]` is `window[i + offset]`. The two are the same molecule, so their longest
+    shared run fixes it. None when too little is shared to trust."""
+    if not own_vdj or not window:
+        return None
+    match = difflib.SequenceMatcher(
+        None, own_vdj, window, autojunk=False
+    ).find_longest_match(0, len(own_vdj), 0, len(window))
+    return (match.b - match.a) if match.size >= min_overlap else None
+
+
+# MiXCR's compact alignment: `seq1From|seq1To|seq1Size|seq2From|seq2To|mutations|score`
+# (`Alignment.toCompactString`). seq1 is the germline, seq2 the read; mutations are in
+# germline coordinates, encoded `([SDI])([ACGTN]?)(\d+)([ACGTN]?)` (MutationsUtil).
+_MUT_RE = re.compile(r"([SDI])([ACGTNacgtn]?)([0-9]+)([ACGTNacgtn]?)")
+
+
+def parse_alignment(value):
+    """(germlineFrom, germlineTo, readFrom, readTo, mutations) or None. Each mutation
+    is (type, germlinePosition, germlineBase, readBase)."""
+    if not value or "|" not in value:
+        return None
+    parts = value.split("|")
+    if len(parts) < 6:
+        return None
+    try:
+        g0, g1, r0, r1 = int(parts[0]), int(parts[1]), int(parts[3]), int(parts[4])
+    except ValueError:
+        return None
+    muts = [(m.group(1), int(m.group(3)), m.group(2).upper(), m.group(4).upper())
+            for m in _MUT_RE.finditer(parts[5])]
+    return (g0, g1, r0, r1, muts)
+
+
+def _walk_alignment(read_len, alignment):
+    """Step one gene's alignment in read order, yielding `(read_index, kind, germline_base)`.
+    `kind` is "tpl" for a templated base, where `germline_base` is None at a match (germline
+    equals the read) or the germline base at a substitution; "ins" for an inserted read base
+    with no germline. A deletion is a germline base the read lacks: it advances the germline
+    without a read position, so it yields nothing."""
+    g0, g1, r0, r1, muts = alignment
+    subs, dels, ins = {}, set(), {}
+    for typ, pos, germ_base, _read_base in muts:
+        if typ == "S":
+            subs[pos] = germ_base
+        elif typ == "D":
+            dels.add(pos)
+        elif typ == "I":
+            ins[pos] = ins.get(pos, 0) + 1
+    g, r = g0, r0
+    while g < g1 and r < r1 and r < read_len:
+        if ins.get(g, 0) > 0:
+            ins[g] -= 1
+            yield r, "ins", None
+            r += 1
+        elif g in dels:
+            g += 1
+        else:
+            yield r, "tpl", subs.get(g)
+            g += 1
+            r += 1
+
+
+def _fill_germline_from_alignment(germline, read, alignment):
+    """Write one gene's germline over the read, in place (see `_walk_alignment`)."""
+    for r, kind, germ_base in _walk_alignment(len(read), alignment):
+        germline[r] = GERMLINE_GAP if kind == "ins" else (read[r] if germ_base is None else germ_base)
+
+
+def reconstruct_germline_over_read(read, alignments):
+    """The germline aligned to the read, from the V/D/J alignments. Positions no gene
+    covers (the non-templated junction, flanks) stay `GERMLINE_GAP`. This is the path
+    MiXCR's pretty-print uses, and it works across CDR3 where the feature-based
+    germline export fails."""
+    if not read:
+        return ""
+    germline = [GERMLINE_GAP] * len(read)
+    found = False
+    for value in alignments:
+        alignment = parse_alignment(value)
+        if alignment is not None:
+            _fill_germline_from_alignment(germline, read, alignment)
+            found = True
+    return "".join(germline) if found else ""
+
+
+def translate_germline(germline_nt):
+    """The germline amino acids, codon by codon in frame with the block's VDJRegion.
+    A codon holding a gap has no germline residue, so it stays a gap."""
+    out = []
+    for i in range(0, len(germline_nt) - 2, 3):
+        codon = germline_nt[i:i + 3]
+        out.append(GERMLINE_GAP if GERMLINE_GAP in codon
+                   else CODONS.get(codon.upper(), "X"))
+    return "".join(out)
+
+
+# Segment markup ids, matching the mapping the export declares for the viewer
+# (`SEGMENTS_MAPPING` in export-specs.lib.tengo): 1=V, 2=D, 3=J, 4=C.
+SEGMENT_IDS = {"V": "1", "D": "2", "J": "3", "C": "4"}
+
+
+def _templated_runs(read_len, alignment):
+    """Read spans one gene templates, as `(start, end)` runs (see `_walk_alignment`). An
+    insertion has no germline, so it breaks a run; a deletion yields nothing, so it does not."""
+    runs = []
+    cur = None
+    for r, kind, _germ in _walk_alignment(read_len, alignment):
+        if kind == "tpl":
+            cur = [r, r + 1] if cur is None else [cur[0], r + 1]
+        elif cur:
+            runs.append(tuple(cur))
+            cur = None
+    if cur:
+        runs.append(tuple(cur))
+    return runs
+
+
+def segments_from_alignments(read, genes, own_vdj, min_overlap=MIN_GERMLINE_NT_OVERLAP):
+    """A V/D/J segments markup for the viewer, from the gene alignments, for when MiXCR's
+    own markup is absent (its CDR3 window was not covered though V still aligned).
+
+    `genes` is `[(name, alignment_string), ...]`. Each gene's longest templated run (its
+    real body; a short spurious match past a long insertion is left out) is projected onto
+    the block's own VDJRegion. The earliest span is stretched back to the region start,
+    since FR1 is V. No span is stretched forward: an absent J leaves CDR3 and FR4 unlabelled,
+    rather than painting them as V. Returns "" when nothing lines up.
+    """
+    if not read or not own_vdj:
+        return ""
+    # The read and the block's VDJRegion are the same sample, so the offset is found from
+    # the read, not the germline (which breaks from the read at every mutation).
+    offset = _longest_match_offset(read, own_vdj, min_overlap)
+    if offset is None:
+        return ""
+    n = len(own_vdj)
+    spans = []
+    for name, alignment in genes:
+        parsed = parse_alignment(alignment)
+        if parsed is None:
+            continue
+        runs = _templated_runs(len(read), parsed)
+        if not runs:
+            continue
+        start, end = max(runs, key=lambda run: run[1] - run[0])
+        s, e = max(0, start - offset), min(n, end - offset)
+        if e > s:
+            spans.append([SEGMENT_IDS[name], s, e])
+    if not spans:
+        return ""
+    spans.sort(key=lambda span: span[1])
+    spans[0][1] = 0
+    return encode_markup((seg_id, s, e - s) for seg_id, s, e in spans)
 
 
 def read_anarci(path):
@@ -312,6 +646,28 @@ def read_mixcr(path):
     if "id" not in where:
         return {}
 
+    # The segments markup and the window nucleotides it is measured on, matched by
+    # prefix because MiXCR renames the window feature in the header.
+    seg_col = next((c for c in header if c.startswith(MIXCR_SEGMENTS_PREFIX)), None)
+    if seg_col is not None:
+        where["mixcrSegmentsNt"] = header.index(seg_col)
+        window = seg_col[len(MIXCR_SEGMENTS_PREFIX):]
+        vdj_col = "nSeq" + window
+        if vdj_col in header:
+            where["mixcrVdjNt"] = header.index(vdj_col)
+
+    for name, (prefix, feature) in MIXCR_PARAM_FIELDS.items():
+        column = prefix + feature
+        if column in header:
+            where[name] = header.index(column)
+    missing = [name for name in MIXCR_PARAM_FIELDS if name not in where]
+    if missing:
+        # A parameterised header did not match the "field" + "feature" form. The
+        # block still runs without those columns; this names the real headers so
+        # the feature strings can be corrected without guessing.
+        print("mutation fields not found: %s; MiXCR headers: %s"
+              % (", ".join(missing), ", ".join(header)), file=sys.stderr)
+
     out = {}
     for row in rows[1:]:
         if not row:
@@ -320,6 +676,35 @@ def read_mixcr(path):
         # `descrsR1` carries the FASTA header, which is the sequence id.
         key = record["id"].split()
         if key:
+            out[key[0]] = record
+    return out
+
+
+# What the constant-boundary align gives that the domain-trimmed main align cannot: the C
+# gene, its allele, and the isotype. By the read id (descrsR1), the same id both aligns use.
+_CONSTANT_FIELDS = {"cGene": "bestCGene", "cHit": "bestCHit", "isotype": "isotypePrimary"}
+
+
+def read_constant(path):
+    """C gene, C hit and isotype per read id, from the C-boundary pass. Empty for a read
+    whose 3' tail is not a real constant region, which is the honest answer."""
+    out = {}
+    if path is None or not pathlib.Path(path).exists():
+        return out
+    with open(path, newline="") as handle:
+        rows = list(csv.reader(handle, delimiter="\t"))
+    if len(rows) < 2 or "descrsR1" not in rows[0]:
+        return out
+    header = rows[0]
+    id_at = header.index("descrsR1")
+    where = {name: header.index(col) for name, col in _CONSTANT_FIELDS.items() if col in header}
+    for row in rows[1:]:
+        if not row or id_at >= len(row):
+            continue
+        key = row[id_at].split()
+        record = {name: row[i] for name, i in where.items()
+                  if i < len(row) and row[i] not in ("", "-")}
+        if key and record:
             out[key[0]] = record
     return out
 
@@ -368,6 +753,20 @@ def region_status(entry):
 
 def reverse_complement(bases):
     return bases.translate(COMPLEMENT)[::-1]
+
+
+def read_flanks(nucleotide, frame, vdj_nt):
+    """The read nucleotides outside the domain, as `(5', 3')`, or None when the domain is
+    not placed. The VDJRegion is a run of the read's codons on the numbered strand, so it is
+    a substring of that strand; what comes before it is the 5' leader (signal peptide or
+    vector), what comes after is the 3' tail (usually the constant region)."""
+    if not nucleotide or not vdj_nt:
+        return None
+    strand = nucleotide if frame < 3 else reverse_complement(nucleotide)
+    at = strand.find(vdj_nt)
+    if at < 0:
+        return None
+    return at, len(strand) - at - len(vdj_nt)
 
 
 def mixed_positions(target, reads):
@@ -478,8 +877,10 @@ def write_sequences(path, annotations, sequences, properties):
         ["sequenceKey", "plate", "well", "detectedChain", "chain", "qcReason", "pairStatus", "pairedWith", "chainMismatch",
          "source", "length", "meanQuality", "qualityScale", "mismatches", "extraReads",
          "note", "regionStatus", "observedChain", "frame", "productive", "stopRegion",
-         "mixedPositions", "vGene", "dGene", "jGene", "vHit", "dHit", "jHit",
+         "mixedPositions", "flank5Nt", "flank3Nt", "unusualFlank",
+         "vGene", "dGene", "jGene", "vHit", "dHit", "jHit",
          "mixcrChains", "vAlignment"]
+        + MIXCR_EXTRA_COLUMNS
         + ["aa_%s" % f for f in FEATURES]
         + ["nt_%s" % f for f in FEATURES]
         + ["prop_%d" % i for i in range(len(names))]
@@ -506,11 +907,14 @@ def write_sequences(path, annotations, sequences, properties):
                  entry.get("regionStatus", entry.get("status", "")), entry.get("observedChain", ""),
                  entry.get("frame", ""), entry.get("productive", ""),
                  entry.get("stopRegion", ""), entry.get("mixedPositions", ""),
+                 entry.get("flank5Nt", ""), entry.get("flank3Nt", ""),
+                 entry.get("unusualFlank", ""),
                  entry.get("vGene", ""), entry.get("dGene", ""),
                  entry.get("jGene", ""), entry.get("vHit", ""),
                  entry.get("dHit", ""), entry.get("jHit", ""),
                  entry.get("mixcrChains", ""),
                  entry.get("vAlignment", "")]
+                + [entry.get(c, "") for c in MIXCR_EXTRA_COLUMNS]
                 + [amino.get(f, "") for f in FEATURES]
                 + [bases.get(f, "") for f in FEATURES]
                 + [p["values"].get(well_key, "") for p in properties]
@@ -522,9 +926,19 @@ def write_sequences(path, annotations, sequences, properties):
 SIDES = {"H": "heavy", "B": "heavy", "D": "heavy",
          "KL": "light", "A": "light", "G": "light"}
 
-# Mirrored on both sides of a clone. Identity stays unprefixed.
+# Mirrored on both sides of a clone. Identity stays unprefixed. The germline and
+# mutation fields after jHit are the mixcr-clonotyping per-clone columns: C gene
+# and isotype, whether the chain is productive, and the somatic hypermutation of
+# V and J. A light chain has no isotype, so it stays empty there.
 PER_SIDE = ["chain", "fileChain", "source", "length", "meanQuality", "regionStatus",
-            "vGene", "dGene", "jGene", "vHit", "dHit", "jHit"]
+            "vGene", "dGene", "jGene", "vHit", "dHit", "jHit",
+            "cGene", "cHit", "isotype", "productiveFlag",
+            "vNtMutCount", "vNtMutRate", "vAaMutCount", "vAaMutRate",
+            "jNtMutCount", "jNtMutRate", "jAaMutCount", "jAaMutRate",
+            "nMutations", "nAaMutCDR", "nAaMutFWR", "fractionCDRMutations",
+            "cdr3LenNt", "cdr3LenAa", "vjJunctionLen", "vdJunctionLen",
+            "djJunctionLen", "totalAddedNt", "flank5Nt", "flank3Nt", "unusualFlank",
+            "segmentsNt", "germlineNt", "germlineAa"]
 
 
 def sides_found(annotations):
@@ -548,20 +962,32 @@ def pair_columns():
     return cols
 
 
+def _side_value(field, entry, sequence):
+    """One scalar of a side, by its name in PER_SIDE. Most fields come straight
+    from the annotation; a few read the sequence it was built from."""
+    if field == "chain":
+        return detected_chain(entry)
+    if field == "fileChain":
+        return entry.get("declaredChain", "")
+    if field in ("source", "length", "meanQuality"):
+        return sequence.get(field, "")
+    if field == "regionStatus":
+        return entry.get("status", "")
+    return entry.get(field, "")
+
+
 def side_cells(entry, by_id):
-    """One side of a clone, flat: its facts, then every region twice over."""
-    m = by_id.get(entry["id"], {}) if entry else {}
-    amino = (entry or {}).get("aa", {})
-    bases = (entry or {}).get("nt", {})
-    cells = [
-        detected_chain(entry) if entry else "", (entry or {}).get("declaredChain", ""),
-        m.get("source", ""),
-        m.get("length", ""), m.get("meanQuality", ""),
-        (entry or {}).get("status", ""), (entry or {}).get("vGene", ""),
-        (entry or {}).get("dGene", ""), (entry or {}).get("jGene", ""),
-        (entry or {}).get("vHit", ""), (entry or {}).get("dHit", ""),
-        (entry or {}).get("jHit", ""),
-    ]
+    """One side of a clone, flat: its facts, then every region twice over.
+
+    The scalars follow PER_SIDE position for position, so the header
+    pair_columns() writes stays aligned with the values here.
+    """
+    if not entry:
+        return [""] * len(PER_SIDE) + [""] * (2 * len(FEATURES))
+    sequence = by_id.get(entry["id"], {})
+    amino = entry.get("aa", {})
+    bases = entry.get("nt", {})
+    cells = [_side_value(f, entry, sequence) for f in PER_SIDE]
     return cells + [amino.get(f, "") for f in FEATURES] + [bases.get(f, "") for f in FEATURES]
 
 
@@ -1107,6 +1533,9 @@ def main(argv=None):
     p.add_argument("--sequences", required=False, help="Sequence nucleotide FASTA")
     p.add_argument("--scheme", required=True, choices=SCHEMES)
     p.add_argument("--mixcr", required=False, help="MiXCR exportAlignments TSV")
+    p.add_argument("--constant", required=False,
+                   help="MiXCR exportAlignments TSV from the C-boundary pass, for the C gene "
+                        "and isotype the domain-trimmed main align cannot see")
     p.add_argument("--out", required=True)
     p.add_argument("--out_sequences_tsv", required=False, help="One row per sequence, for the p-frame")
     p.add_argument("--out_pairs_tsv", required=False,
@@ -1138,6 +1567,7 @@ def main(argv=None):
     sequences = trace_report["sequences"]
     by_bucket = {b: read_anarci(getattr(args, "csv_%s" % b.lower())) for b in BUCKETS}
     aligned = read_mixcr(args.mixcr)
+    constant = read_constant(args.constant)
     nucleotides = read_fasta(args.sequences)
     peaks = json.loads(pathlib.Path(args.peaks).read_text()) if args.peaks else {}
 
@@ -1176,6 +1606,19 @@ def main(argv=None):
             entry["aa"] = amino
             if nucleotide:
                 entry["nt"] = bases
+                # How much read sits outside the domain, per side, for traceability. A flank
+                # larger than a V-plus-constant read explains gets an informational note.
+                flanks = read_flanks(nucleotide, frame, bases.get("VDJRegion", ""))
+                if flanks:
+                    entry["flank5Nt"], entry["flank3Nt"] = flanks
+                    if flanks[0] + flanks[1] > FLANK_UNUSUAL_NT:
+                        entry["unusualFlank"] = "yes"
+            # CDR3 length from the regions the block itself built, so it matches
+            # the block's own CDR3 columns. nt in nucleotides, aa in residues.
+            if amino.get("CDR3"):
+                entry["cdr3LenAa"] = len(amino["CDR3"])
+            if nucleotide and bases.get("CDR3"):
+                entry["cdr3LenNt"] = len(bases["CDR3"])
             entry["status"] = STATUS_ANNOTATED if any(amino.values()) else STATUS_FAILED
             if entry["status"] == STATUS_ANNOTATED:
                 entry["domainComplete"] = domain_complete(entry)
@@ -1186,6 +1629,10 @@ def main(argv=None):
                     "" if not entry["domainComplete"] and not entry["stopRegion"]
                     else "no" if entry["stopRegion"] else "yes"
                 )
+                # mixcr-clonotyping names this true/false; the sequence table keeps
+                # the block's own yes/no for reading.
+                entry["productiveFlag"] = {"yes": "true", "no": "false"}.get(
+                    entry["productive"], "")
                 reads = [peaks[p] for p in sequence.get("reads", []) if p in peaks]
                 mixed = mixed_positions(bases.get("CDR3", "") if nucleotide else "", reads)
                 if mixed is not None:
@@ -1197,15 +1644,64 @@ def main(argv=None):
         hit = aligned.get(chosen)
         if hit is not None:
             # MiXCR writes "-" where it found no hit. An absent gene is absent,
-            # not a gene called "-".
-            for field, name in (("vGene", "vGene"), ("dGene", "dGene"),
-                                ("jGene", "jGene"), ("vHit", "vHit"),
-                                ("dHit", "dHit"), ("jHit", "jHit"),
-                                ("chains", "mixcrChains"),
-                                ("vAlignment", "vAlignment")):
+            # not a gene called "-". The same copy carries the germline gene
+            # calls, the isotype and the somatic-hypermutation counts and rates.
+            for field in ("vGene", "dGene", "jGene", "cGene", "vHit", "dHit",
+                          "jHit", "cHit", "isotype", "vAlignment",
+                          "vNtMutCount", "vNtMutRate", "vAaMutCount", "vAaMutRate",
+                          "jNtMutCount", "jNtMutRate", "jAaMutCount", "jAaMutRate",
+                          "nMutations", "nAaMutCDR", "nAaMutFWR",
+                          "vjJunctionLen", "vdJunctionLen", "djJunctionLen"):
                 value = hit.get(field, "")
                 if value not in ("", "-"):
-                    entry[name] = value
+                    entry[field] = value
+            # The C gene, C hit and isotype come from the constant-boundary pass. The
+            # domain-trimmed main align has no constant region, so its copies above are
+            # empty; this fills them where the read's tail is a real constant.
+            for field, value in constant.get(chosen, {}).items():
+                entry[field] = value
+            # `chains` is MiXCR's locus; it travels under its own entry name.
+            if hit.get("chains", "") not in ("", "-"):
+                entry["mixcrChains"] = hit["chains"]
+            # The share of amino-acid changes that fall in the CDRs. Honest only
+            # when some mutation was seen; left empty when V reads as germline.
+            cdr = _to_number(entry.get("nAaMutCDR"))
+            fwr = _to_number(entry.get("nAaMutFWR"))
+            if cdr is not None and fwr is not None and cdr + fwr > 0:
+                entry["fractionCDRMutations"] = round(cdr / (cdr + fwr), 4)
+            # Total added nucleotides: VD + DJ junctions for a chain with a D gene,
+            # else the VJ junction. Matches mixcr-clonotyping.
+            vd = _to_number(entry.get("vdJunctionLen"))
+            dj = _to_number(entry.get("djJunctionLen"))
+            vj = _to_number(entry.get("vjJunctionLen"))
+            if vd is not None and dj is not None:
+                entry["totalAddedNt"] = int(vd + dj)
+            elif vj is not None:
+                entry["totalAddedNt"] = int(vj)
+            own_vdj = (entry.get("nt") or {}).get("VDJRegion", "")
+            read = (hit.get("readSequence", "") or "").split(",")[0]
+            genes = [("V", hit.get("vAlignment", "")),
+                     ("D", hit.get("dAlignment", "")),
+                     ("J", hit.get("jAlignment", ""))]
+            # V/D/J/C coverage for the viewer, re-based onto the block's own VDJRegion.
+            # MiXCR's own segment markup first; when it is absent (the CDR3 window was not
+            # covered though V still aligned) the segments are derived from the same
+            # alignments, so a V-only read still shows its V segment and gene, not a blank.
+            segments = project_segments(hit.get("mixcrSegmentsNt", ""),
+                                        hit.get("mixcrVdjNt", ""), own_vdj)
+            if not segments:
+                segments = segments_from_alignments(read, genes, own_vdj)
+            if segments:
+                entry["segmentsNt"] = segments
+            # The germline for the viewer's mismatch track, rebuilt from the V/D/J
+            # alignments and projected onto the block's VDJRegion. The sample base
+            # shows a match, the germline base a difference, a gap where no gene is
+            # templated (the junction, the flanks).
+            over_read = reconstruct_germline_over_read(read, [a for _, a in genes])
+            germline = project_germline(read, over_read, own_vdj)
+            if germline:
+                entry["germlineNt"] = germline
+                entry["germlineAa"] = translate_germline(germline)
         elif args.mixcr and sequence.get("source") != "none":
             # R31: no germline is not a failed annotation. The sequence keeps its
             # regions, its chain and its translation.

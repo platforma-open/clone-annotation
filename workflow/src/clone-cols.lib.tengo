@@ -6,24 +6,25 @@ help := import(":result-help")
 FEATURES := ["VDJRegion", "FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"]
 SIDES := ["heavy", "light"]
 PER_SIDE := ["chain", "source", "length", "meanQuality", "regionStatus",
-	"vGene", "dGene", "jGene"]
+	"vGene", "dGene", "jGene", "cGene"]
 
 LABELS := {
 	chain: "Chain", fileChain: "Chain in File Name", source: "Source", length: "Length",
 	meanQuality: "Mean Quality", regionStatus: "Regions",
-	vGene: "V Gene", dGene: "D Gene", jGene: "J Gene"
+	vGene: "V Gene", dGene: "D Gene", jGene: "J Gene", cGene: "C Gene"
 }
 
 TYPES := {
 	chain: "String", fileChain: "String", source: "String", length: "Long",
 	meanQuality: "Double", regionStatus: "String",
-	vGene: "String", dGene: "String", jGene: "String"
+	vGene: "String", dGene: "String", jGene: "String", cGene: "String"
 }
 
 SHOWN := {
 	cloneId: true, wells: true,
-	heavy_chain: true, heavy_vGene: true, heavy_aa_CDR3: true,
-	light_chain: true, light_vGene: true, light_aa_CDR3: true
+	heavy_chain: true, heavy_vGene: true, heavy_cGene: true, heavy_isotype: true,
+	heavy_aa_CDR3: true,
+	light_chain: true, light_vGene: true, light_cGene: true, light_aa_CDR3: true
 }
 
 // A number can be summarised four ways and nothing in the data says which one
@@ -44,8 +45,9 @@ axisSpec := {
 priority := func(column) {
 	order := {
 		cloneId: 1010, wells: 1000, pairStatus: 980, qcVerdict: 970, qcReason: 960,
-		heavy_chain: 910, heavy_vGene: 900, heavy_aa_CDR3: 880,
-		light_chain: 875, light_vGene: 870, light_aa_CDR3: 850,
+		heavy_chain: 910, heavy_vGene: 900, heavy_cGene: 896, heavy_isotype: 894,
+		heavy_aa_CDR3: 880,
+		light_chain: 875, light_vGene: 870, light_cGene: 866, light_aa_CDR3: 850,
 		// Last of all, after the property columns.
 		wellCount: 1
 	}
@@ -96,6 +98,12 @@ settings := func(properties, sides) {
 			name := side + "_" + f
 			columns = append(columns,
 				col(name, TYPES[f], title + " " + LABELS[f], SHOWN[name] == true))
+		}
+		// Isotype is a heavy-chain property (IgG/IgM/...); a light chain has none, its
+		// class being its C gene (kappa/lambda). So it is a heavy-only column.
+		if side == "heavy" {
+			columns = append(columns,
+				col("heavy_isotype", "String", "Heavy Isotype", SHOWN["heavy_isotype"] == true))
 		}
 		for f in FEATURES {
 			name := side + "_aa_" + f

@@ -247,6 +247,422 @@ def test_germline_joins_positionally_and_its_absence_is_reported():
     check("absence reported", result["notAligned"], ["Plate1 A2 IGH"])
 
 
+# The parameterised mutation headers MiXCR writes, in the "field(feature)" form
+# read_mixcr builds. Kept beside the test so a change to the feature strings in
+# annotate.py shows up here.
+MUTATION_HEADER = {
+    "nMutationsCount{FR1Begin:FR3End}": "7",
+    "nMutationsRate{FR1Begin:FR3End}": "0.05",
+    "aaMutationsCount{FR1Begin:FR3End}": "3",
+    "aaMutationsRate{FR1Begin:FR3End}": "0.02",
+    "nMutationsCountFR4": "1",
+    "nMutationsRateFR4": "0.01",
+    "aaMutationsCountFR4": "0",
+    "aaMutationsRateFR4": "0.0",
+    "nMutationsCount{FR1Begin:FR3End},FR4": "8",
+    "aaMutationsCountCDR1,CDR2": "2",
+    "aaMutationsCountFR1,FR2,FR3,FR4": "1",
+}
+
+
+def test_mutation_and_germline_columns_join_each_sequence():
+    work = tempfile.mkdtemp()
+    report = os.path.join(work, "report.json")
+    json.dump({"sequences": [
+        {"id": "m0", "plate": "P1", "well": "A1", "chain": "IGH", "source": "merged"},
+    ]}, open(report, "w"))
+
+    csv_h = os.path.join(work, "h.csv")
+    write_anarci(csv_h, [("m0|0", "120.0")])
+
+    # The constant region, the isotype and every mutation field, after the preset's
+    # own columns so position cannot be relied on.
+    mixcr = os.path.join(work, "alignments.tsv")
+    gene_cols = ["descrsR1", "topChains", "bestVGene", "bestJGene", "bestCGene",
+                 "bestVHit", "bestJHit", "bestCHit", "isotypePrimary"]
+    gene_vals = ["m0", "IGH", "IGHV3-23", "IGHJ4", "IGHG1",
+                 "IGHV3-23*00", "IGHJ4*00", "IGHG1*00", "IgG"]
+    mut_cols = list(MUTATION_HEADER)
+    # A heavy chain: VD and DJ junctions present, VJ empty.
+    junction = {"nLengthVJJunction": "", "nLengthVDJunction": "3", "nLengthDJJunction": "4"}
+    jun_cols = list(junction)
+    with open(mixcr, "w") as handle:
+        handle.write("\t".join(gene_cols + mut_cols + jun_cols) + "\n")
+        handle.write("\t".join(gene_vals + [MUTATION_HEADER[c] for c in mut_cols]
+                               + [junction[c] for c in jun_cols]) + "\n")
+
+    sequences_tsv = os.path.join(work, "sequences.tsv")
+    result = run_annotate(work, report,
+                          ["--csv_h", csv_h, "--mixcr", mixcr,
+                           "--out_sequences_tsv", sequences_tsv])
+    e = {a["id"]: a for a in result["annotations"]}["m0"]
+    check("c gene without allele", e["cGene"], "IGHG1")
+    check("c hit with allele", e["cHit"], "IGHG1*00")
+    check("isotype", e["isotype"], "IgG")
+    check("v nt mutation count", e["vNtMutCount"], "7")
+    check("v nt mutation rate", e["vNtMutRate"], "0.05")
+    check("v aa mutation count", e["vAaMutCount"], "3")
+    check("j nt mutation count", e["jNtMutCount"], "1")
+    check("j aa count of zero is kept", e["jAaMutCount"], "0")
+    check("total nt mutations", e["nMutations"], "8")
+    check("cdr aa mutations", e["nAaMutCDR"], "2")
+    check("fwr aa mutations", e["nAaMutFWR"], "1")
+    check("cdr fraction of all aa mutations", e["fractionCDRMutations"], round(2 / 3, 4))
+    check("vd junction length", e["vdJunctionLen"], "3")
+    check("dj junction length", e["djJunctionLen"], "4")
+    check("total added is vd plus dj", e["totalAddedNt"], 7)
+    check("cdr3 aa length matches the region", e["cdr3LenAa"], len(e["aa"]["CDR3"]))
+
+    with open(sequences_tsv) as handle:
+        rows = list(csv.reader(handle, delimiter="\t"))
+    head = rows[0]
+    row = dict(zip(head, rows[1]))
+    check("sequence table has the isotype column", "isotype" in head, True)
+    check("sequence table has the mutation column", "nMutations" in head, True)
+    check("sequence row carries the mutation count", row["nMutations"], "8")
+    check("sequence row carries the fraction", row["fractionCDRMutations"],
+          str(round(2 / 3, 4)))
+
+
+# 40 shared bases, long enough to clear MIN_SEGMENT_OVERLAP.
+_SEG_CORE = "ACGTTGCAAGCTTACGGATCCGTACCATGGAACTGCAGTC"
+
+
+def test_segments_are_rebased_onto_the_blocks_vdjregion():
+    from annotate import project_segments, parse_markup, encode_markup
+    # MiXCR's window carries two extra bases at the 5' end vs the block's.
+    mixcr_vdj = "GG" + _SEG_CORE
+    own_vdj = _SEG_CORE
+    # V covers window positions 0..27, J covers 27..40; offset is two.
+    out = project_segments(encode_markup([("1", 0, 27), ("3", 27, 13)]),
+                           mixcr_vdj, own_vdj)
+    ents = parse_markup(out)
+    # V clipped at the 5' trim; J stretched to the region end (FR4 is J).
+    check("V span rebased and clipped to the block's region", ents[0], ("1", 0, 25))
+    check("J span stretched to the region end", ents[1], ("3", 25, 15))
+
+
+def test_segments_v_is_stretched_over_the_uncovered_fr1():
+    from annotate import project_segments, parse_markup, encode_markup
+    # MiXCR measured segments on CDR1Begin:FR4End, which starts ten bases into the
+    # block's VDJRegion: those ten are FR1, part of V. V must cover them.
+    own_vdj = "GGGGGGGGGG" + _SEG_CORE
+    mixcr_vdj = _SEG_CORE
+    out = project_segments(encode_markup([("1", 0, 27), ("3", 27, 13)]),
+                           mixcr_vdj, own_vdj)
+    ents = parse_markup(out)
+    check("V stretched back over FR1 to the region start", ents[0], ("1", 0, 37))
+    check("J span rebased", ents[1], ("3", 37, 13))
+
+
+def test_segments_project_when_the_regions_stagger():
+    from annotate import project_segments, parse_markup, encode_markup
+    # ANARCI's region has three 5' bases MiXCR trimmed; MiXCR has three 3' bases
+    # ANARCI trimmed. Neither contains the other, so the old exact match failed.
+    own_vdj = "AAA" + _SEG_CORE
+    mixcr_vdj = _SEG_CORE + "TTT"
+    out = project_segments(encode_markup([("1", 0, 20), ("3", 20, 20)]),
+                           mixcr_vdj, own_vdj)
+    ents = parse_markup(out)
+    check("V stretched over the block's 5' bases", ents[0], ("1", 0, 23))
+    check("J span rebased", ents[1], ("3", 23, 20))
+
+
+def test_segments_project_through_an_internal_mismatch():
+    from annotate import project_segments, parse_markup, encode_markup
+    core = _SEG_CORE + "TTACGCATGCATGCTAGCTAGCATCGATCGATCGTAGCTA"  # 80 bases
+    own_vdj = core
+    # One base differs in the middle; the two still line up at offset zero.
+    mixcr_vdj = core[:40] + "N" + core[41:]
+    out = project_segments(encode_markup([("1", 0, 50), ("3", 50, 30)]),
+                           mixcr_vdj, own_vdj)
+    ents = parse_markup(out)
+    check("V span spans the mismatch", ents[0], ("1", 0, 50))
+    check("J span rebased", ents[1], ("3", 50, 30))
+
+
+def test_read_mixcr_captures_the_segment_window_columns():
+    # MiXCR renames the window feature in the header ({CDR1Begin:CDR3End} becomes
+    # CDR1_TO_CDR3), so the markup column is found by prefix and paired with its
+    # own nSeq, whatever the window is called.
+    from annotate import read_mixcr
+    work = tempfile.mkdtemp()
+    path = os.path.join(work, "alignments.tsv")
+    with open(path, "w") as handle:
+        handle.write("descrsR1\ttopChains\tnSeqCDR1_TO_CDR3\t"
+                     "nAnnotationOfSegmentsForCDR1_TO_CDR3\t"
+                     "bestVAlignment\tbestDAlignment\tbestJAlignment\ttargetSequences\n")
+        handle.write("r0\tIGL\tACGTACGT\t1:0+5|3:5+3\t"
+                     "0|8|8|0|8|SA2G|50.0\t\t0|4|4|8|12||20.0\tACGTACGTGGGG\n")
+    hits = read_mixcr(path)
+    check("the segment window nucleotides are read", hits["r0"]["mixcrVdjNt"], "ACGTACGT")
+    check("the segment markup is read", hits["r0"]["mixcrSegmentsNt"], "1:0+5|3:5+3")
+    # The germline is rebuilt from the raw alignments, so read_mixcr captures them
+    # and the read they align to.
+    check("the V alignment is read", hits["r0"]["vAlignment"], "0|8|8|0|8|SA2G|50.0")
+    check("the J alignment is read", hits["r0"]["jAlignment"], "0|4|4|8|12||20.0")
+    check("the read sequence is read", hits["r0"]["readSequence"], "ACGTACGTGGGG")
+
+
+def test_segments_empty_when_the_regions_do_not_line_up():
+    from annotate import project_segments
+    check("unrelated regions share nothing, so no markup",
+          project_segments("1:0+5", "C" * 40, "A" * 40), "")
+    check("no markup yields no markup",
+          project_segments("", _SEG_CORE, _SEG_CORE), "")
+
+
+def test_germline_marks_substitutions_and_gaps_the_uncovered_flank():
+    from annotate import project_germline, GERMLINE_GAP
+    # Ten FR1-like bases before the domain. The read (the sample) covers the last forty
+    # positions; the germline over it differs from the sample at position 5.
+    own_vdj = "GGGGGGGGGG" + _SEG_CORE
+    read = _SEG_CORE
+    germline = _SEG_CORE[:5] + "A" + _SEG_CORE[6:]
+    out = project_germline(read, germline, own_vdj)
+    check("germline string has the region's length", len(out), len(own_vdj))
+    check("the uncovered flank is a gap, not a match", out[:10], GERMLINE_GAP * 10)
+    check("the covered span carries the germline, differences included", out[10:], germline)
+
+
+def test_germline_covered_span_carries_matches_too():
+    from annotate import project_germline, GERMLINE_GAP
+    # No mutations: the covered span carries the germline (equal to the sample, drawn as
+    # matches), and the two uncovered bases before it are a gap.
+    out = project_germline(_SEG_CORE, _SEG_CORE, "GG" + _SEG_CORE)
+    check("uncovered prefix is a gap", out[:2], GERMLINE_GAP * 2)
+    check("covered span carries the germline", out[2:], _SEG_CORE)
+
+
+def test_germline_carries_a_gap_in_the_window_through():
+    from annotate import project_germline, GERMLINE_GAP
+    # A gap inside the germline (the junction) is kept, not turned into a match, once the
+    # germline is projected onto the block's VDJRegion.
+    read = _SEG_CORE
+    germline = _SEG_CORE[:20] + GERMLINE_GAP * 5 + _SEG_CORE[25:]
+    out = project_germline(read, germline, "GG" + _SEG_CORE)
+    check("the gap inside the germline survives the projection",
+          out[2 + 20:2 + 25], GERMLINE_GAP * 5)
+
+
+def test_germline_places_a_heavily_mutated_read_via_the_read():
+    from annotate import project_germline
+    # The germline differs from the sample every third base, so no long germline run matches
+    # own_vdj; matching the germline would place nothing. The read is the sample and matches
+    # own_vdj fully, so the offset from the read still places the germline.
+    own_vdj = "GG" + _SEG_CORE
+    read = _SEG_CORE
+    germline = "".join(("T" if c != "T" else "A") if i % 3 == 0 else c
+                       for i, c in enumerate(_SEG_CORE))
+    out = project_germline(read, germline, own_vdj)
+    check("a heavily mutated read still places, via the read offset", out[2:], germline)
+
+
+def test_germline_empty_when_it_does_not_line_up():
+    from annotate import project_germline
+    check("a read unrelated to the region yields nothing",
+          project_germline("C" * 20, "C" * 20, "A" * 40), "")
+    check("no read yields nothing", project_germline("", "", _SEG_CORE), "")
+
+
+def test_parse_alignment_reads_ranges_and_mutations():
+    from annotate import parse_alignment
+    # seq1From|seq1To|seq1Size|seq2From|seq2To|mutations|score. seq1 is the germline,
+    # seq2 the read. One substitution: germline G at position 121 reads as A.
+    g0, g1, r0, r1, muts = parse_alignment("70|372|393|5|307|SG121A|2759.0")
+    check("germline range", (g0, g1), (70, 372))
+    check("read range", (r0, r1), (5, 307))
+    check("the substitution is parsed", muts, [("S", 121, "G", "A")])
+    check("an empty alignment is nothing", parse_alignment(""), None)
+    check("a value with no fields is nothing", parse_alignment("no-pipes"), None)
+    check("no mutations is an empty list",
+          parse_alignment("0|5|5|0|5||100.0")[4], [])
+
+
+def test_reconstruct_germline_marks_a_substitution():
+    from annotate import reconstruct_germline_over_read
+    # The read matches germline everywhere but position 2, where germline is A. A match
+    # copies the read base (it equals germline); the substitution writes the germline A.
+    read = "ACGTACGT"
+    out = reconstruct_germline_over_read(read, ["0|8|8|0|8|SA2G|50.0"])
+    check("the germline over the read, with the substitution base", out, "ACATACGT")
+
+
+def test_reconstruct_germline_gaps_an_inserted_read_base():
+    from annotate import reconstruct_germline_over_read, GERMLINE_GAP
+    # The read carries an extra T before germline position 2. That read base has no
+    # germline, so it becomes a gap; the rest is the matching germline.
+    read = "ACTGT"
+    out = reconstruct_germline_over_read(read, ["0|4|4|0|5|IT2|50.0"])
+    check("the inserted read base is a gap", out[2], GERMLINE_GAP)
+    check("the bases around it carry the germline", out[:2] + out[3:], "ACGT")
+
+
+def test_reconstruct_germline_leaves_the_junction_between_genes_a_gap():
+    from annotate import reconstruct_germline_over_read, GERMLINE_GAP
+    # V covers the read start, J the read end; the junction between them has no gene,
+    # so it stays a gap. This is what lets CDR3 show "no germline" honestly.
+    read = "ACGTACGTGGGG"
+    out = reconstruct_germline_over_read(
+        read, ["0|5|5|0|5||50.0", "", "0|4|4|8|12||20.0"])
+    check("V covers the read start", out[:5], "ACGTA")
+    check("the junction is a gap", out[5:8], GERMLINE_GAP * 3)
+    check("J covers the read end", out[8:], "GGGG")
+
+
+def test_reconstruct_germline_empty_without_an_alignment():
+    from annotate import reconstruct_germline_over_read
+    check("no read is nothing", reconstruct_germline_over_read("", ["0|5|5|0|5||1.0"]), "")
+    check("no alignment is nothing", reconstruct_germline_over_read("ACGT", ["", ""]), "")
+
+
+def test_translate_germline_gaps_a_codon_holding_a_gap():
+    from annotate import translate_germline
+    # Codon by codon in frame. A codon with a gap has no germline residue, so it stays
+    # a gap; the full codons translate normally.
+    out = translate_germline("GCAATGG.GGGG")   # GCA=A, ATG=M, G.G=gap, GGG=G
+    check("the germline residues, with the gapped codon left a gap", out, "AM.G")
+
+
+def test_segments_from_alignments_shows_a_v_only_read():
+    from annotate import segments_from_alignments, parse_markup
+    # V aligns over the first 40 bases; the 10-base junction after it has no gene. The
+    # segment track still shows V, rather than nothing, so the V gene can be named.
+    own = _SEG_CORE + "TTTTTGGGGG"
+    v = "0|40|40|0|40||100.0"
+    out = segments_from_alignments(own, [("V", v), ("D", ""), ("J", "")], own)
+    check("a V-only read gets a V segment, the junction left blank",
+          parse_markup(out), [("1", 0, 40)])
+
+
+def test_segments_from_alignments_v_and_j_leave_the_rest_blank():
+    from annotate import segments_from_alignments, parse_markup
+    # V at the start, J later, a junction between and a tail after J. V is stretched back to
+    # the region start (FR1 is V); J is not stretched forward, so the tail stays unlabelled.
+    v_body, junction, j_body, tail = _SEG_CORE, "TTTTTGGGGG", "ACACACACACACACACAC", "CCCCCCCC"
+    own = v_body + junction + j_body + tail
+    v = "0|40|40|0|40||100.0"
+    j = "0|18|18|50|68||50.0"
+    out = segments_from_alignments(own, [("V", v), ("D", ""), ("J", j)], own)
+    # parse_markup gives (id, start, length): V covers 0..40, J covers 50..68 (length 18).
+    check("V and J mark their own spans, junction and tail left blank",
+          parse_markup(out), [("1", 0, 40), ("3", 50, 18)])
+
+
+def test_segments_from_alignments_ignores_an_over_extended_v_tail():
+    from annotate import segments_from_alignments, parse_markup
+    # The V alignment runs past its body: a 16-base insertion, then a spurious 4-base match.
+    # The longest templated run is the real body, so the stray tail match is left out.
+    own = _SEG_CORE + "TTTTTGGGGGTTTTTGGGGG"
+    muts = "".join("IA40" for _ in range(16))
+    v = "0|44|44|0|60|%s|100.0" % muts
+    out = segments_from_alignments(own, [("V", v), ("D", ""), ("J", "")], own)
+    check("the over-extended V keeps only its real body",
+          parse_markup(out), [("1", 0, 40)])
+
+
+def test_read_flanks_forward_frame():
+    from annotate import read_flanks
+    # A read with a 5' leader of 5 and a 3' tail of 7 around a 16-base domain.
+    domain = "ACGTACGTACGTACGT"
+    read = "GGGGG" + domain + "TTTTTTT"
+    check("forward-frame flanks are the read outside the domain", read_flanks(read, 0, domain), (5, 7))
+
+
+def test_read_flanks_reverse_frame():
+    from annotate import read_flanks, reverse_complement
+    # For a reverse frame the domain sits on the other strand; the flanks are reported in
+    # that strand's orientation (5' before the domain, 3' after).
+    domain = "ACGTACGTACGTACGT"
+    strand = "GG" + domain + "TTTT"
+    read = reverse_complement(strand)
+    check("reverse-frame flanks, in strand orientation", read_flanks(read, 4, domain), (2, 4))
+
+
+def test_read_flanks_absent_when_not_placed():
+    from annotate import read_flanks
+    check("a domain not in the read is nothing", read_flanks("ACGTACGT", 0, "TTTTTT"), None)
+    check("no read is nothing", read_flanks("", 0, "ACGT"), None)
+    check("no domain is nothing", read_flanks("ACGT", 0, ""), None)
+
+
+def test_trim_domain_nt_span_counts_non_gap_residues():
+    import trim
+    # offset is frame % 3; residue i is the codon at offset + 3*i. 10 residues from start 7.
+    check("forward span", trim.domain_nt_span(0, 7, ["A"] * 10), (21, 51))
+    check("frame offset shifts the span", trim.domain_nt_span(1, 2, ["A"] * 5), (7, 22))
+    check("gaps do not count", trim.domain_nt_span(0, 0, ["A", "-", "A"]), (0, 6))
+
+
+def test_trim_cuts_the_leader_and_the_tail():
+    import trim
+    # A 21 nt leader, a 30 nt domain (10 residues from protein index 7), a 48 nt tail.
+    read = "A" * 21 + "C" * 30 + "G" * 48
+    best = ("H", 0, (["1"] * 10, ["A"] * 10, 100.0, 7), 100.0)
+    # Span (21, 51); with the 9 nt margin the cut is read[12:60].
+    check("the leader and tail are cut to the domain plus a margin",
+          trim.trim(read, best), "A" * 9 + "C" * 30 + "G" * 9)
+
+
+def test_trim_uses_the_numbered_strand_for_a_reverse_frame():
+    import trim
+    from annotate import reverse_complement
+    strand = "A" * 21 + "C" * 30 + "G" * 48
+    read = reverse_complement(strand)
+    best = ("H", 3, (["1"] * 10, ["A"] * 10, 100.0, 7), 100.0)
+    check("a reverse frame is cut on its own strand, domain forward",
+          trim.trim(read, best), "A" * 9 + "C" * 30 + "G" * 9)
+
+
+def test_trim_keeps_the_whole_read_without_numbering():
+    import trim
+    check("no numbering leaves the read whole", trim.trim("ACGTACGT", None), "ACGTACGT")
+    check("no read stays empty", trim.trim("", ("H", 0, ([], [], 0.0, 0), 0.0)), "")
+
+
+def test_read_constant_keys_c_gene_and_isotype_by_read():
+    from annotate import read_constant
+    import tempfile, os
+    path = os.path.join(tempfile.mkdtemp(), "constant.tsv")
+    with open(path, "w") as handle:
+        handle.write("descrsR1\tbestCGene\tbestCHit\tisotypePrimary\n")
+        handle.write("s1\tIGHG1\tIGHG1*00\tIgG\n")       # a real constant
+        handle.write("s2\t\t\t\n")                        # tail not a constant: empty
+    out = read_constant(path)
+    check("a real constant is read by id", out.get("s1"),
+          {"cGene": "IGHG1", "cHit": "IGHG1*00", "isotype": "IgG"})
+    check("an empty constant is left out", "s2" in out, False)
+
+
+def test_markup_round_trips_through_base36():
+    from annotate import parse_markup, encode_markup
+    check("base36 encode", encode_markup([("1", 36, 72)]), "1:10+20")
+    check("base36 decode", parse_markup("1:10+20"), [("1", 36, 72)])
+    check("missing length defaults to one", parse_markup("2:5"), [("2", 5, 1)])
+
+
+def test_a_missing_mutation_header_is_not_guessed():
+    work = tempfile.mkdtemp()
+    report = os.path.join(work, "report.json")
+    json.dump({"sequences": [
+        {"id": "m0", "plate": "P1", "well": "A1", "chain": "IGH", "source": "merged"},
+    ]}, open(report, "w"))
+    csv_h = os.path.join(work, "h.csv")
+    write_anarci(csv_h, [("m0|0", "120.0")])
+
+    # Only the gene calls, none of the mutation columns.
+    mixcr = os.path.join(work, "alignments.tsv")
+    with open(mixcr, "w") as handle:
+        handle.write("descrsR1\ttopChains\tbestVGene\tbestVHit\n")
+        handle.write("m0\tIGH\tIGHV3-23\tIGHV3-23*00\n")
+
+    e = {a["id"]: a for a in
+         run_annotate(work, report, ["--csv_h", csv_h, "--mixcr", mixcr])["annotations"]}["m0"]
+    check("gene still read", e["vGene"], "IGHV3-23")
+    check("no mutation count invented", e.get("vNtMutCount"), None)
+    check("no fraction invented", e.get("fractionCDRMutations"), None)
+
+
 def sequence(seq_id, plate, well, chain, pair_key, observed=None):
     e = {"id": seq_id, "plate": plate, "well": well, "declaredChain": chain,
          "pairKey": pair_key}

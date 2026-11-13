@@ -132,6 +132,7 @@ wf.body(func(args) {
 		anarciSw := assets.importSoftware("@platforma-open/milaboratories.software-anarci:main")
 		mixcrSw := assets.importSoftware("@platforma-open/milaboratories.software-mixcr:main")
 		annotateSw := assets.importSoftware("@platforma-open/milaboratories.clone-annotation.software:annotate")
+		trimSw := assets.importSoftware("@platforma-open/milaboratories.clone-annotation.software:trim")
 
 		// ANARCI recognises a variable domain by its shape, so it needs no
 		// reference. The six frames go in and the one that is a domain comes
@@ -153,40 +154,96 @@ wf.body(func(args) {
 			inMediumQueue().
 			run()
 
-		// MiXCR adds the germline, and only where a library covers the
-		// material. Nothing above depends on it.
-		align := exec.builder().
-			software(mixcrSw).
-			env("MI_USE_SYSTEM_CA", "true").
-			secret("MI_LICENSE", "MI_LICENSE").
+		// Two MiXCR aligns, because no single one gives both the V(D)J and the constant.
+		// The main align (below) runs on the read cut to its domain, so V cannot over-extend
+		// and D, J, CDR3 and FR4 align for every read whatever its tail is. A second align
+		// (alignConstant) runs on the full read with the right boundary at C, which aligns
+		// the constant region and calls the C gene and isotype where the tail is a real
+		// constant. annotate.py takes the V(D)J from the first and the C gene / isotype from
+		// the second. A C boundary on its own would lose J wherever the tail is vector; the
+		// trim covers those. See wip/domain-trim-before-mixcr.md.
+		trimmed := exec.builder().
+			software(trimSw).
 			addFile(tracy.nucleotideName, result.getFile(tracy.nucleotideName)).
-			arg("align").
-			arg("-p").arg("generic-amplicon").
-			arg("--species").arg(species).
-			arg("--rna").
-			arg("--floating-left-alignment-boundary").
-			// The right boundary takes a required value: `J` for a J-gene
-			// primer. Passing the flag bare makes it swallow the next argument,
-			// and MiXCR then exits 2 with its usage text.
-			arg("--floating-right-alignment-boundary").arg("J").
-			arg("--assemble-clonotypes-by").arg("CDR3").
-			// Without this the FASTA header is thrown away during alignment and
-			// `-descrsR1` has nothing to export, so the join loses its key.
-			arg("-OsaveOriginalReads=true").
-			// A sequence built from one read covers one end of the domain and
-			// may stop short of CDR3. Dropping those would lose a fifth of a
-			// real plate from the germline half without saying so.
-			arg("--keep-non-CDR3-alignments").
-			arg("--threads").argExpr("{system.cpu}").
-			arg(tracy.nucleotideName).
-			arg("alignments.vdjca").
-			saveFile("alignments.vdjca").
+			addFile("anarci_H.csv", anarci.getFile("anarci_H.csv")).
+			addFile("anarci_KL.csv", anarci.getFile("anarci_KL.csv")).
+			arg("--sequences").arg(tracy.nucleotideName).
+			arg("--csv_h").arg("anarci_H.csv").
+			arg("--csv_kl").arg("anarci_KL.csv").
+			arg("--out").arg("trimmed.fasta").
+			saveFile("trimmed.fasta").
 			printErrStreamToStdout().
 			inMediumQueue().
 			run()
 
-		// The field order here is the order annotate.py reads positionally, so
-		// whatever MiXCR calls its columns cannot break the join.
+		mixcrAlign := func(input, boundary, output) {
+			return exec.builder().
+				software(mixcrSw).
+				env("MI_USE_SYSTEM_CA", "true").
+				secret("MI_LICENSE", "MI_LICENSE").
+				addFile(input.name, input.file).
+				arg("align").
+				arg("-p").arg("generic-amplicon").
+				arg("--species").arg(species).
+				arg("--rna").
+				arg("--floating-left-alignment-boundary").
+				// The right boundary takes a required value; passing the flag bare makes it
+				// swallow the next argument. `J` for the main align (read cut to the domain),
+				// `C` for the constant align (full read ending in the constant region).
+				arg("--floating-right-alignment-boundary").arg(boundary).
+				// Required by the generic-amplicon preset: its bundle fails validation at
+				// align time without an assembling feature, even though this block runs no
+				// assemble step. CDR3 is the standard choice.
+				arg("--assemble-clonotypes-by").arg("CDR3").
+				// Without this the FASTA header is thrown away during alignment and
+				// `-descrsR1` has nothing to export, so the join loses its key.
+				arg("-OsaveOriginalReads=true").
+				// A sequence built from one read covers one end of the domain and
+				// may stop short of CDR3. Dropping those would lose a fifth of a
+				// real plate from the germline half without saying so.
+				arg("--keep-non-CDR3-alignments").
+				arg("--threads").argExpr("{system.cpu}").
+				arg(input.name).
+				arg(output).
+				saveFile(output).
+				printErrStreamToStdout().
+				inMediumQueue().
+				run()
+		}
+
+		align := mixcrAlign(
+			{ name: "trimmed.fasta", file: trimmed.getFile("trimmed.fasta") },
+			"J", "alignments.vdjca")
+		alignConstant := mixcrAlign(
+			{ name: tracy.nucleotideName, file: result.getFile(tracy.nucleotideName) },
+			"C", "constant.vdjca")
+
+		// The C gene and isotype, from the constant align's full-read alignments. Only these
+		// two are taken; the V(D)J of this pass is ignored (the main align gives it). Empty
+		// for a read whose tail is not a real constant, which is the honest answer.
+		exportedConstant := exec.builder().
+			software(mixcrSw).
+			env("MI_USE_SYSTEM_CA", "true").
+			secret("MI_LICENSE", "MI_LICENSE").
+			addFile("constant.vdjca", alignConstant.getFile("constant.vdjca")).
+			arg("exportAlignments").
+			arg("-descrsR1").
+			arg("-cGene").
+			arg("-cHit").
+			arg("-isotype").arg("primary").
+			arg("constant.vdjca").
+			arg("constant.tsv").
+			saveFile("constant.tsv").
+			printErrStreamToStdout().
+			inMediumQueue().
+			run()
+
+		// annotate.py reads these columns by header name, not by position, so the
+		// preset is free to add its own columns first. A mutation flag takes an
+		// optional trailing argument, so each is followed by another flag and the
+		// no-argument `-vAlignment` stays last before the positionals; a mutation
+		// flag placed there would swallow the input file. The gene-feature strings
+		// must match MIXCR_PARAM_FIELDS in annotate.py.
 		exported := exec.builder().
 			software(mixcrSw).
 			env("MI_USE_SYSTEM_CA", "true").
@@ -198,11 +255,39 @@ wf.body(func(args) {
 			arg("-vGene").
 			arg("-dGene").
 			arg("-jGene").
+			arg("-cGene").
 			arg("-vHit").
 			arg("-dHit").
 			arg("-jHit").
+			arg("-cHit").
+			arg("-isotype").arg("primary").
+			arg("-nMutationsCount").arg("{FR1Begin:FR3End}").
+			arg("-nMutationsRate").arg("{FR1Begin:FR3End}").
+			arg("-aaMutationsCount").arg("{FR1Begin:FR3End}").
+			arg("-aaMutationsRate").arg("{FR1Begin:FR3End}").
+			arg("-nMutationsCount").arg("FR4").
+			arg("-nMutationsRate").arg("FR4").
+			arg("-aaMutationsCount").arg("FR4").
+			arg("-aaMutationsRate").arg("FR4").
+			arg("-nMutationsCount").arg("{FR1Begin:FR3End},FR4").
+			arg("-aaMutationsCount").arg("CDR1,CDR2").
+			arg("-aaMutationsCount").arg("FR1,FR2,FR3,FR4").
+			arg("-nLength").arg("VJJunction").
+			arg("-nLength").arg("VDJunction").
+			arg("-nLength").arg("DJJunction").
+			// V/D/J/C coverage markup for the viewer, re-based onto the block's own
+			// VDJRegion. The window is CDR1Begin:CDR3End, not VDJRegion: reads start
+			// inside FR1, so MiXCR marks the whole VDJRegion uncovered but still covers
+			// CDR1 through CDR3. annotate.py extends V over FR1 and J over the tail.
+			arg("-nFeature").arg("{CDR1Begin:CDR3End}").
+			arg("-nAnnotationString").arg("Segments").arg("{CDR1Begin:CDR3End}").
+			// Raw V/D/J alignments and the read, for the germline mismatch track.
+			// annotate.py rebuilds the germline from these; the feature-based germline
+			// export cannot reach CDR3, but the alignments cover it.
 			arg("-vHitScore").
 			arg("-vAlignment").
+			arg("-dAlignment").
+			arg("-jAlignment").
 			arg("alignments.vdjca").
 			arg("alignments.tsv").
 			saveFile("alignments.tsv").
@@ -222,6 +307,7 @@ wf.body(func(args) {
 			addFile("anarci_H.csv", anarci.getFile("anarci_H.csv")).
 			addFile("anarci_KL.csv", anarci.getFile("anarci_KL.csv")).
 			addFile("alignments.tsv", exported.getFile("alignments.tsv")).
+			addFile("constant.tsv", exportedConstant.getFile("constant.tsv")).
 			addFile(tracy.nucleotideName, result.getFile(tracy.nucleotideName)).
 			addFile(tracy.peaksName, result.getFile(tracy.peaksName)).
 			arg("--report").arg(tracy.reportName).
@@ -231,6 +317,7 @@ wf.body(func(args) {
 			arg("--csv_h").arg("anarci_H.csv").
 			arg("--csv_kl").arg("anarci_KL.csv").
 			arg("--mixcr").arg("alignments.tsv").
+			arg("--constant").arg("constant.tsv").
 			writeFile("properties.json", is_undefined(args.properties) ? [] : args.properties).
 			arg("--properties").arg("properties.json").
 			arg("--out").arg("annotation.json").

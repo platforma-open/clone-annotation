@@ -155,7 +155,7 @@ function doImport() {
 .warnings {
   margin: 0;
   padding-left: 18px;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--warn-01, #b36b00);
 }
 </style>

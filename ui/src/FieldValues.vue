@@ -53,7 +53,7 @@ function toggle(label: string) {
 
 <style module>
 .details {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .summary {
@@ -108,7 +108,7 @@ function toggle(label: string) {
   padding: 0 4px;
   color: var(--txt-link, #5f31cc);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .plate {

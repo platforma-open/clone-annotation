@@ -259,7 +259,7 @@ function pieceTitle(p: Piece): string | undefined {
   <div v-if="file" :class="$style.builder" data-testid="pattern-builder">
     <div :class="$style.header">
       <span :class="$style.title">
-        Click the parts of the name
+        Click file name parts and assign plate, well, chain or direction fields.
         <button v-if="inSync && !hasWell" type="button" :class="$style.link" @click="findWell">
           Find the well
         </button>
@@ -323,6 +323,15 @@ function pieceTitle(p: Piece): string | undefined {
       >
         − folder
       </button>
+      <!-- Split and Join reshape the name parts, so they sit with the name, not with the
+           role chips below. Shown only when a part is selected. -->
+      <template v-if="piece && inSync">
+        <span :class="$style.gap" />
+        <button type="button" :class="$style.link" @click="split">Split</button>
+        <button v-if="canJoin" type="button" :class="$style.link" @click="join">
+          Join with next
+        </button>
+      </template>
     </div>
 
     <p v-if="!inSync" :class="$style.note">
@@ -359,10 +368,6 @@ function pieceTitle(p: Piece): string | undefined {
       </button>
       <template v-if="piece && inSync">
         <span :class="$style.gap" />
-        <button type="button" :class="$style.link" @click="split">Split</button>
-        <button v-if="canJoin" type="button" :class="$style.link" @click="join">
-          Join with next
-        </button>
         <button
           v-if="piece.role !== 'well'"
           type="button"
@@ -390,14 +395,14 @@ function pieceTitle(p: Piece): string | undefined {
 
 <style module>
 .builder {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 
 .title {
@@ -420,7 +425,7 @@ function pieceTitle(p: Piece): string | undefined {
   border: 1px solid var(--border-color-div-grey);
   border-radius: 6px;
   font-family: var(--font-family-monospace);
-  font-size: 13px;
+  font-size: 16px;
 }
 
 .separator {
@@ -456,7 +461,7 @@ function pieceTitle(p: Piece): string | undefined {
   border: 1px solid transparent;
   border-radius: 4px;
   padding: 3px 8px;
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
 }
 
@@ -504,17 +509,17 @@ function pieceTitle(p: Piece): string | undefined {
   padding: 0 4px;
   color: var(--txt-link, #5f31cc);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
   font-family: var(--font-family-base);
 }
 
 .note {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   color: var(--txt-03);
 }
 
 .notes {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   padding-left: 18px;
   color: var(--warn-01, #b36b00);
 }
