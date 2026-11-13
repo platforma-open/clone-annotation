@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.clone-annotation.software
 
+## 1.1.0
+
+### Minor Changes
+
+- 30a75d8: Germline annotation
+
 ## 1.0.5
 
 ### Patch Changes

@@ -1,5 +1,16 @@
 # @platforma-open/milaboratories.clone-annotation.ui
 
+## 1.1.0
+
+### Minor Changes
+
+- 30a75d8: Germline annotation
+
+### Patch Changes
+
+- Updated dependencies [30a75d8]
+  - @platforma-open/milaboratories.clone-annotation.model@1.1.0
+
 ## 1.0.6
 
 ### Patch Changes
