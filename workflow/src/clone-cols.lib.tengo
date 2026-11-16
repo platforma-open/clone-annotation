@@ -82,6 +82,9 @@ settings := func(properties, sides, ...opts) {
 	}
 	// A name-keyed set lists the record headers (sequence ids), not wells (option B).
 	nameId := len(opts) > 0 ? opts[0] : false
+	// An amino-acid set has no nucleotide and no MiXCR germline, so the gene,
+	// isotype and nt columns are left out.
+	aminoAcid := len(opts) > 1 ? opts[1] : false
 	wellsLabel := nameId ? "Sequence IDs" : "Wells"
 	wellCountLabel := nameId ? "Number of Sequences" : "Number of Wells"
 	perWell := nameId ? " (per Sequence)" : " (per Well)"
@@ -97,16 +100,20 @@ settings := func(properties, sides, ...opts) {
 		col("qcReason", "String", "QC Reason", false)
 	]
 
+	isGene := { vGene: true, dGene: true, jGene: true, cGene: true }
 	for side in sides {
 		title := side == "heavy" ? "Heavy" : "Light"
 		for f in PER_SIDE {
+			if aminoAcid && isGene[f] == true {
+				continue
+			}
 			name := side + "_" + f
 			columns = append(columns,
 				col(name, TYPES[f], title + " " + LABELS[f], SHOWN[name] == true))
 		}
 		// Isotype is a heavy-chain property (IgG/IgM/...); a light chain has none, its
 		// class being its C gene (kappa/lambda). So it is a heavy-only column.
-		if side == "heavy" {
+		if side == "heavy" && !aminoAcid {
 			columns = append(columns,
 				col("heavy_isotype", "String", "Heavy Isotype", SHOWN["heavy_isotype"] == true))
 		}
@@ -115,9 +122,11 @@ settings := func(properties, sides, ...opts) {
 			columns = append(columns,
 				col(name, "String", title + " " + f + " aa", SHOWN[name] == true))
 		}
-		for f in FEATURES {
-			columns = append(columns,
-				col(side + "_nt_" + f, "String", title + " " + f + " nt", false))
+		if !aminoAcid {
+			for f in FEATURES {
+				columns = append(columns,
+					col(side + "_nt_" + f, "String", title + " " + f + " nt", false))
+			}
 		}
 	}
 

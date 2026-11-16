@@ -51,9 +51,13 @@ def translate(nucleotide):
     )
 
 
-def build(plan, manifest, files, combined=False):
+def build(plan, manifest, files, combined=False, amino_acid=False):
     """One sequence per plan entry, plus the per-record reads for the Files table
-    and the nucleotide and six-frame protein FASTA records the tail needs."""
+    and the protein FASTA the tail needs.
+
+    A nucleotide record also writes `sequences.fasta` and is translated into six
+    frames for ANARCI. An amino-acid record is the protein already: it writes no
+    nucleotide and goes into `frames.fasta` as one frame, `|0`."""
     sequences, set_aside, reads = [], [], []
     nucleotides, frames = [], []
     cache = {}
@@ -99,6 +103,11 @@ def build(plan, manifest, files, combined=False):
         reads.append({"id": file_id, "path": read_path, "plate": plate,
                       "length": len(bases), "usableLength": len(bases),
                       "kept": True, "qualitySource": "none"})
+        if amino_acid:
+            # The record is the protein. ANARCI finds the reading frame by shape,
+            # but there is only one: the sequence as it stands, frame 0.
+            frames.append(">%s|0\n%s\n" % (seq_id, bases))
+            continue
         nucleotides.append(">%s\n%s\n" % (seq_id, bases))
         reverse = bases.translate(COMPLEMENT)[::-1]
         for frame in range(6):
@@ -135,8 +144,10 @@ def main(argv):
     manifest = json.loads(pathlib.Path(argv[2]).read_text())
     plan = json.loads(pathlib.Path(argv[3]).read_text())
     combined = "--combined" in argv
+    amino_acid = "--amino-acid" in argv
 
-    sequences, set_aside, reads, nucleotides, frames = build(plan, manifest, files, combined)
+    sequences, set_aside, reads, nucleotides, frames = build(
+        plan, manifest, files, combined, amino_acid)
 
     pathlib.Path("sequences.fasta").write_text("".join(nucleotides))
     pathlib.Path("frames.fasta").write_text("".join(frames))

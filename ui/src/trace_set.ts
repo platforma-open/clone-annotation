@@ -20,8 +20,16 @@ export const FASTA_NT_EXTENSIONS = ["fasta", "fa", "fna", "fas"];
  * the picker is not narrowed to one form up front. */
 export const ALL_EXTENSIONS = [...TRACE_EXTENSIONS, ...FASTA_NT_EXTENSIONS];
 
+/** Either FASTA form. Both read from a `.fasta`-family file and share the
+ * combined / per-file door; only the alphabet differs. */
+export function isFastaForm(form: InputForm): boolean {
+  return form === "fastaNt" || form === "fastaAa";
+}
+
 /** The form a selection looks like, from the file extensions. One set is one
- * form, so the majority wins and a trace is the default. */
+ * form, so the majority wins and a trace is the default. A `.fasta` selection
+ * guesses nucleotide; the scientist switches to amino acid in the dropdown, since
+ * the two share an extension. */
 export function guessForm(handles: ImportFileHandle[]): InputForm {
   let fasta = 0;
   let trace = 0;

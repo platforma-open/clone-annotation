@@ -29,6 +29,7 @@ import {
   describeCombined,
   describeSelection,
   guessForm,
+  isFastaForm,
 } from "./trace_set";
 
 const app = useApp();
@@ -60,7 +61,7 @@ const draft = reactive({
 // other shapes key on the file path. Vue reads `{{` as interpolation, so the
 // token examples live here, not in the template.
 const example = computed(() => {
-  if (draft.form === "fastaNt") {
+  if (isFastaForm(draft.form)) {
     return draft.fileShape === "combined"
       ? "{{Name}}_{{Chain}}"
       : "{{Plate}}/{{Well}}_{{Chain}}.fasta";
@@ -68,8 +69,8 @@ const example = computed(() => {
   return "{{Plate}}_{{Chain}}_{{Direction}}_{{Well}}.ab1";
 });
 
-const isCombined = computed(() => draft.form === "fastaNt" && draft.fileShape === "combined");
-const title = computed(() => (draft.form === "fastaNt" ? "Import FASTA" : "Import traces"));
+const isCombined = computed(() => isFastaForm(draft.form) && draft.fileShape === "combined");
+const title = computed(() => (isFastaForm(draft.form) ? "Import FASTA" : "Import traces"));
 
 // Closing both is how the scientist cancels out of importing altogether.
 watch(
@@ -157,7 +158,7 @@ function doImport() {
   app.model.data.name = draft.name.trim();
   app.model.data.form = draft.form;
   // Only a FASTA set can be combined; every other form is one record per file.
-  app.model.data.fileShape = draft.form === "fastaNt" ? draft.fileShape : "perFile";
+  app.model.data.fileShape = isFastaForm(draft.form) ? draft.fileShape : "perFile";
   app.model.data.namePattern = draft.pattern;
   app.model.data.traceFiles = draft.files;
   draft.formOpen = false;
@@ -183,12 +184,13 @@ function doImport() {
     >
       <template #tooltip>
         What the files hold. The whole set is one form. A Sanger trace is read and merged; a
-        nucleotide FASTA is read as it stands.
+        nucleotide FASTA is read as it stands; an amino-acid FASTA is numbered as protein, with no
+        germline.
       </template>
     </PlDropdown>
 
     <PlDropdown
-      v-if="draft.form === 'fastaNt'"
+      v-if="isFastaForm(draft.form)"
       v-model="draft.fileShape"
       :options="FILE_SHAPE_OPTIONS"
       :required="true"

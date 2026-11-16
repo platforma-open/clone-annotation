@@ -118,20 +118,25 @@ DECLARED_CLASS = {
     "trg": "G", "gamma": "G", "trd": "D", "delta": "D",
 }
 
-# ANARCI tells kappa from lambda only as one class. MiXCR, where it aligned the
-# sequence, names the locus.
+# ANARCI numbers kappa and lambda in one light class, but still calls which each is.
 CLASS_NAME = {"H": "IGH", "KL": "IGK/IGL", "A": "TRA", "B": "TRB", "G": "TRG", "D": "TRD"}
 LOCUS_CLASS = {"IGH": "H", "IGK": "KL", "IGL": "KL", "TRA": "A", "TRB": "B", "TRG": "G",
                "TRD": "D"}
+# ANARCI's chain_type to the locus it names, for a light chain.
+ANARCI_LOCUS = {"K": "IGK", "L": "IGL"}
 
 
 def detected_chain(entry):
     """The chain the sequence itself shows: MiXCR's locus where it agrees with
-    ANARCI's class, else ANARCI's class. Empty where nothing was numbered."""
+    ANARCI's class, else ANARCI's own call. For a light chain ANARCI tells kappa
+    from lambda, so a set with no MiXCR still gets IGK or IGL; it stays IGK/IGL
+    only where ANARCI gave no type. Empty where nothing was numbered."""
     observed = entry.get("observedChain", "")
     locus = entry.get("mixcrChains", "")
     if observed and LOCUS_CLASS.get(locus) == observed:
         return locus
+    if observed == "KL":
+        return ANARCI_LOCUS.get(entry.get("anarciChainType", ""), CLASS_NAME["KL"])
     return CLASS_NAME.get(observed, "")
 
 PAIRED = "Paired"
@@ -586,6 +591,9 @@ def read_anarci(path):
     first = len(header) - len(labels)
     score_at = header.index("score") if "score" in header else None
     start_at = header.index("seqstart_index") if "seqstart_index" in header else None
+    # ANARCI tells kappa (K) from lambda (L) here, even though it numbers both in
+    # the one KL file. It is the only kappa/lambda call the amino-acid path has.
+    type_at = header.index("chain_type") if "chain_type" in header else None
     for row in rows[1:]:
         if not row:
             continue
@@ -599,9 +607,11 @@ def read_anarci(path):
             # Where the domain starts inside the protein ANARCI was given, which
             # is what maps a residue back to its codon.
             "start": int(row[start_at]) if start_at is not None and row[start_at] else 0,
+            "chainType": row[type_at] if type_at is not None and row[type_at] else "",
         }
     return {
-        k: (labels, v["residues"], v["score"], v["start"]) for k, v in numbering.items()
+        k: (labels, v["residues"], v["score"], v["start"], v["chainType"])
+        for k, v in numbering.items()
     }
 
 
@@ -819,7 +829,7 @@ def domain_score(candidate_id, by_bucket, scheme):
     best = pick_frame(candidate_id, by_bucket)
     if best is None:
         return False, 0
-    bucket, _, (labels, residues, _, start), _ = best
+    bucket, _, (labels, residues, _, start, _), _ = best
     amino, _ = build_regions(labels, residues, REGION_RANGES[scheme][BUCKET_TABLE[bucket]],
                              None, start)
     return domain_complete({"aa": amino}), sum(len(v) for v in amino.values())
@@ -1095,7 +1105,7 @@ def exported_pairings(annotations, accepted=None):
             if accepted is None or (p["plate"], p["well"]) in accepted]
 
 
-def clones_by_key(annotations, accepted=None):
+def clones_by_key(annotations, accepted=None, amino_acid=False):
     """The accepted pairings grouped by clone, one per well.
 
     A well with two identical candidates for a chain gives two pairings of the
@@ -1103,7 +1113,7 @@ def clones_by_key(annotations, accepted=None):
     """
     groups = {}
     for pairing in exported_pairings(annotations, accepted):
-        key = variant_key_of(pairing)
+        key = variant_key_of(pairing, amino_acid)
         if key is None:
             continue
         wells = groups.setdefault(key, {})
@@ -1127,13 +1137,13 @@ def accepted_wells(verdicts, export):
     return {(w["plate"], w["well"]) for w in verdicts if w["verdict"] in allowed}
 
 
-def write_abundance(path, annotations, accepted=None):
+def write_abundance(path, annotations, accepted=None, amino_acid=False):
     """Wells per plate, per variant: the long shape an abundance column needs.
 
     The sample is the plate, so a variant seen on two plates carries a count
     for each rather than one total.
     """
-    groups = clones_by_key(annotations, accepted)
+    groups = clones_by_key(annotations, accepted, amino_acid)
 
     with open(path, "w", newline="") as handle:
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
@@ -1143,10 +1153,10 @@ def write_abundance(path, annotations, accepted=None):
             for m in members:
                 per_plate[m["plate"]] = per_plate.get(m["plate"], 0) + 1
             for plate in sorted(per_plate):
-                writer.writerow([plate or "set", clone_key(members[0]), per_plate[plate]])
+                writer.writerow([plate or "set", clone_key(members[0], amino_acid), per_plate[plate]])
 
 
-def write_trace_reads(path, annotations, sequences, reads, accepted=None):
+def write_trace_reads(path, annotations, sequences, reads, accepted=None, amino_acid=False):
     """The one read the sequence viewer shows per variant and chain.
 
     A variant is the clone's first well, the same well its sequences are taken
@@ -1156,14 +1166,14 @@ def write_trace_reads(path, annotations, sequences, reads, accepted=None):
     """
     by_id = {m["id"]: m for m in sequences}
     usable = {r["path"]: r.get("usableLength") or 0 for r in reads}
-    groups = clones_by_key(annotations, accepted)
+    groups = clones_by_key(annotations, accepted, amino_acid)
 
     with open(path, "w", newline="") as handle:
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
         writer.writerow(["variantKey", "chain", "path"])
         for members in groups.values():
             first = members[0]
-            key = clone_key(first)
+            key = clone_key(first, amino_acid)
             for side, chain in (("heavy", "A"), ("light", "B")):
                 entry = first.get(side)
                 paths = by_id.get(entry["id"], {}).get("reads", []) if entry else []
@@ -1171,14 +1181,14 @@ def write_trace_reads(path, annotations, sequences, reads, accepted=None):
                     writer.writerow([key, chain, max(paths, key=lambda p: usable.get(p, 0))])
 
 
-def clone_key(pairing):
+def clone_key(pairing, amino_acid=False):
     """The key mixcr-clonotyping gives a clonotype, built the same way.
 
     SHA-256 of the identity parts joined by "#", in base64 with only letters
     and digits kept, cut to the 21 characters that hold 120 bits. The same
     chains get the same key in every run.
     """
-    parts = variant_key_of(pairing).split("\u0000")
+    parts = variant_key_of(pairing, amino_acid).split("\u0000")
     digest = hashlib.sha256("#".join(parts).encode()).digest()
     return re.sub(r"[^a-zA-Z0-9]", "", base64.b64encode(digest).decode())[:21]
 
@@ -1197,11 +1207,18 @@ def clone_labels(keys):
     return labels
 
 
-def variant_key_of(pairing):
-    """Exact identity: the nucleotide of both chains, letter for letter."""
+def variant_key_of(pairing, amino_acid=False):
+    """Exact identity: both chains letter for letter, on the set's own alphabet.
+
+    Nucleotide by default; amino acid when the set carried no nucleotide. The
+    alphabet is one declared choice per run, not read off each sequence: a blind
+    "nt if present, else aa" fallback would collapse a short nucleotide read on
+    amino acid and change which clones appear.
+    """
+    region = "aa" if amino_acid else "nt"
     key = "\u0000".join([
-        ((pairing["heavy"] or {}).get("nt", {}) or {}).get("VDJRegion", ""),
-        ((pairing["light"] or {}).get("nt", {}) or {}).get("VDJRegion", ""),
+        ((pairing["heavy"] or {}).get(region, {}) or {}).get("VDJRegion", ""),
+        ((pairing["light"] or {}).get(region, {}) or {}).get("VDJRegion", ""),
     ])
     return None if key == "\u0000" else key
 
@@ -1222,17 +1239,17 @@ def best_verdict(members, by_well):
 
 
 def write_clones(path, annotations, sequences, properties, counts=None, accepted=None,
-                   verdicts=(), name_identity=False):
+                   verdicts=(), name_identity=False, amino_acid=False):
     """One row per distinct clone, with every well it was seen in.
 
-    Identity is the nucleotide of both chains, letter for letter, and nothing
-    looser (R17). After collapse a clone is not in a well; it was observed
-    in several, so the wells travel with it and so does everything measured on
-    each of them (R12).
+    Identity is both chains letter for letter, on the set's own alphabet
+    (nucleotide by default, amino acid for an AA set), and nothing looser (R17).
+    After collapse a clone is not in a well; it was observed in several, so the
+    wells travel with it and so does everything measured on each of them (R12).
     """
     by_id = {m["id"]: m for m in sequences}
     by_well = {(w["plate"], w["well"]): w for w in verdicts}
-    groups = clones_by_key(annotations, accepted)
+    groups = clones_by_key(annotations, accepted, amino_acid)
 
     header = ["variantKey"] + clone_columns(properties)
     with open(path, "w", newline="") as handle:
@@ -1241,7 +1258,7 @@ def write_clones(path, annotations, sequences, properties, counts=None, accepted
         if counts is not None:
             counts["pairsIn"] = sum(len(g) for g in groups.values())
             counts["clonesOut"] = len(groups)
-        keys = {id(g): clone_key(g[0]) for g in groups.values()}
+        keys = {id(g): clone_key(g[0], amino_acid) for g in groups.values()}
         labels = clone_labels(keys.values())
         for members in sorted(groups.values(), key=lambda g: -len(g)):
             first = members[0]
@@ -1402,7 +1419,7 @@ def qc_row(wells, keys_by_well, chains_by_well, sequences, reads):
     }
 
 
-def plate_summary(verdicts, annotations, sequences=(), reads=()):
+def plate_summary(verdicts, annotations, sequences=(), reads=(), amino_acid=False):
     """One row per plate, and the same numbers for the whole set.
 
     Unique antibodies count only wells that gave a usable one. A variant found on
@@ -1414,7 +1431,7 @@ def plate_summary(verdicts, annotations, sequences=(), reads=()):
     usable = {(w["plate"], w["well"]) for w in verdicts if w["verdict"] != FAILED}
     keys = {}
     for pairing in candidate_pairings(annotations):
-        key = variant_key_of(pairing)
+        key = variant_key_of(pairing, amino_acid)
         where = (pairing["plate"], pairing["well"])
         if key is not None and where in usable:
             keys.setdefault(where, set()).add(key)
@@ -1566,6 +1583,9 @@ def main(argv=None):
     p.add_argument("--name-identity", action="store_true",
                    help="Clones are keyed by a header name, not a well, so the clone table "
                         "lists the header alone rather than the file-and-well")
+    p.add_argument("--amino-acid", action="store_true",
+                   help="The set is amino acid: no nucleotide and no germline, and clones "
+                        "collapse on the amino-acid VDJRegion, not the nucleotide one")
     for bucket in BUCKETS:
         p.add_argument("--csv_%s" % bucket.lower(), required=False)
     args = p.parse_args(argv)
@@ -1599,9 +1619,11 @@ def main(argv=None):
             if sequence.get("source") != "none":
                 not_numbered.append(where.strip())
         else:
-            bucket, frame, (labels, residues, _, start), _ = best
+            bucket, frame, (labels, residues, _, start, chain_type), _ = best
             entry["frame"] = frame
             entry["observedChain"] = bucket
+            # ANARCI's own kappa/lambda call for the winning domain.
+            entry["anarciChainType"] = chain_type
             nucleotide = nucleotides.get(chosen)
             amino, bases = build_regions(
                 labels,
@@ -1730,17 +1752,18 @@ def main(argv=None):
     collapse = {}
     if args.out_clones_tsv:
         write_clones(args.out_clones_tsv, annotations, sequences, properties, collapse,
-                       accepted, verdicts, name_identity=args.name_identity)
+                       accepted, verdicts, name_identity=args.name_identity,
+                       amino_acid=args.amino_acid)
     if args.out_abundance_tsv:
-        write_abundance(args.out_abundance_tsv, annotations, accepted)
+        write_abundance(args.out_abundance_tsv, annotations, accepted, args.amino_acid)
     if args.out_trace_reads_tsv:
         write_trace_reads(args.out_trace_reads_tsv, annotations, sequences,
-                          trace_report.get("reads", []), accepted)
+                          trace_report.get("reads", []), accepted, args.amino_acid)
     # A file Tracy could not read is set aside without ever becoming a read.
     called = {r["path"] for r in trace_report.get("reads", [])}
     files = trace_report.get("reads", []) + [
         dict(s, kept=False) for s in trace_report.get("setAside", []) if s["path"] not in called]
-    plates, total = plate_summary(verdicts, annotations, sequences, files)
+    plates, total = plate_summary(verdicts, annotations, sequences, files, args.amino_acid)
     if args.out_plates_tsv:
         write_plates(args.out_plates_tsv, plates)
     if args.out_wells_tsv:

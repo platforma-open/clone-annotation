@@ -68,6 +68,9 @@ settings := func(properties, ...opts) {
 	// A name-keyed set (a combined FASTA with no well) labels its identity by the
 	// record's header, the "Sequence ID".
 	nameId := len(opts) > 0 ? opts[0] : false
+	// An amino-acid set has no nucleotide and no MiXCR germline, so the gene,
+	// flank and nt columns would all be blank and are left out.
+	aminoAcid := len(opts) > 1 ? opts[1] : false
 	columns := [
 		col("plate", "String", "Plate"),
 		col("well", "String", nameId ? "Sequence ID" : "Well"),
@@ -89,25 +92,30 @@ settings := func(properties, ...opts) {
 		col("frame", "Long", "Frame"),
 		col("productive", "String", "Productive"),
 		col("stopRegion", "String", "Stop Codon in"),
-		col("mixedPositions", "Long", "Mixed Positions in CDR3"),
-		col("flank5Nt", "Long", "Read nt before the Domain"),
-		col("flank3Nt", "Long", "Read nt after the Domain"),
-		col("unusualFlank", "String", "Extra Read Beyond Domain"),
-		col("vGene", "String", "V Gene"),
-		col("dGene", "String", "D Gene"),
-		col("jGene", "String", "J Gene"),
-		col("vHit", "String", "V Hit with Allele"),
-		col("dHit", "String", "D Hit with Allele"),
-		col("jHit", "String", "J Hit with Allele"),
-		col("mixcrChains", "String", "MiXCR Chain"),
-		col("vAlignment", "String", "Departures from Germline")
+		col("mixedPositions", "Long", "Mixed Positions in CDR3")
 	]
+
+	if !aminoAcid {
+		columns = append(columns, col("flank5Nt", "Long", "Read nt before the Domain"))
+		columns = append(columns, col("flank3Nt", "Long", "Read nt after the Domain"))
+		columns = append(columns, col("unusualFlank", "String", "Extra Read Beyond Domain"))
+		columns = append(columns, col("vGene", "String", "V Gene"))
+		columns = append(columns, col("dGene", "String", "D Gene"))
+		columns = append(columns, col("jGene", "String", "J Gene"))
+		columns = append(columns, col("vHit", "String", "V Hit with Allele"))
+		columns = append(columns, col("dHit", "String", "D Hit with Allele"))
+		columns = append(columns, col("jHit", "String", "J Hit with Allele"))
+		columns = append(columns, col("mixcrChains", "String", "MiXCR Chain"))
+		columns = append(columns, col("vAlignment", "String", "Departures from Germline"))
+	}
 
 	for f in FEATURES {
 		columns = append(columns, col("aa_" + f, "String", f + " aa"))
 	}
-	for f in FEATURES {
-		columns = append(columns, col("nt_" + f, "String", f + " nt"))
+	if !aminoAcid {
+		for f in FEATURES {
+			columns = append(columns, col("nt_" + f, "String", f + " nt"))
+		}
 	}
 
 	if !is_undefined(properties) {

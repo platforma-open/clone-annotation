@@ -125,6 +125,31 @@ def test_a_combined_file_yields_one_sequence_per_record_by_index():
     check("nothing set aside", set_aside, [])
 
 
+# A variable domain as protein, which is what an amino-acid FASTA carries.
+PROTEIN = ("QVQLVESGGGLVQPGGSLRLSCAASGFTFSSYAMSWVRQAPGKGLEWVSAISGSGGSTYYADSVKG"
+           "RFTISRDNSKNTLYLQMNSLRAEDTAVYYCAKDIGGFDYWGQGTLVTVSS")
+
+
+def test_amino_acid_record_is_one_frame_and_no_nucleotide():
+    tmp = pathlib.Path(tempfile.mkdtemp())
+    files = tmp / "fasta"
+    files.mkdir()
+    (files / "t00000").write_text(">VH1 heavy\n%s\n" % PROTEIN)
+    manifest = {"t00000": {"path": "VH1_H.fasta", "plate": "P1"}}
+    plan = [{"plate": "P1", "well": "A1", "chain": "H", "pairKey": "P1\x00A1",
+             "forward": "t00000", "extra": 0}]
+    sequences, set_aside, reads, nt, frames = reader.build(
+        plan, manifest, files, amino_acid=True)
+    check("one sequence", len(sequences), 1)
+    check("no nucleotide written", nt, [])
+    check("one frame for the protein", len(frames), 1)
+    check("the protein is frame 0", frames[0].split("\n")[0], ">s00000|0")
+    check("the frame carries the protein", frames[0].split("\n")[1], PROTEIN)
+    check("length is the protein length", sequences[0]["length"], len(PROTEIN))
+    check("one read row", len(reads), 1)
+    check("quality is inert", reads[0]["qualitySource"], "none")
+
+
 for name, fn in sorted(globals().items()):
     if name.startswith("test_"):
         fn()

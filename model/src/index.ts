@@ -72,6 +72,7 @@ export const EXPORT_WELLS_OPTIONS = [
 export const INPUT_FORM_OPTIONS = [
   { label: "Sanger trace (.ab1, .scf)", value: "trace" },
   { label: "FASTA, nucleotide", value: "fastaNt" },
+  { label: "FASTA, amino acid", value: "fastaAa" },
 ] as const;
 
 export const FILE_SHAPE_OPTIONS = [
@@ -853,7 +854,9 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       { type: "link", href: "/", label: "Files" },
       { type: "link", href: "/qc", label: nameId ? "Sequence QC" : "Plate View" },
     ];
-    if (ctx.data.form !== "fastaNt") {
+    // Read Quality charts Phred per read, which only a trace carries; both FASTA
+    // forms are letters only.
+    if (ctx.data.form === "trace") {
       sections.push({ type: "link", href: "/read-quality", label: "Read Quality" });
     }
     sections.push({ type: "link", href: "/results", label: "Results" });

@@ -91,7 +91,8 @@ chainDomain := func(chain) {
 	}
 }
 
-keyAxis := func(blockId) {
+keyAxis := func(blockId, ...opts) {
+	aminoAcid := len(opts) > 0 && opts[0] == true
 	return {
 		column: "variantKey",
 		naRegex: "",
@@ -101,8 +102,8 @@ keyAxis := func(blockId) {
 			domain: {
 				"pl7.app/blockId": blockId,
 				"pl7.app/modality": "vdj",
-				// The key hashes the nucleotide VDJRegion of both chains.
-				"pl7.app/alphabet": "nucleotide",
+				// The key hashes the VDJRegion of both chains, on the set's own alphabet.
+				"pl7.app/alphabet": aminoAcid ? "aminoacid" : "nucleotide",
 				"pl7.app/identitySource": "derived",
 				"pl7.app/vdj/receptor": RECEPTOR,
 				"pl7.app/vdj/resolution": "receptor",
@@ -145,12 +146,17 @@ sampleAxis := func(blockId, ...opts) {
 // The scheme decides where each region ends. A consumer that checks conserved
 // residues reads it from the region columns: the liabilities block, missing it,
 // expects the cysteine at the start of CDR3, where only MiXCR's CDR3 has it.
-sequenceColumns := func(scheme, chains) {
+sequenceColumns := func(scheme, chains, ...opts) {
+	aminoAcid := len(opts) > 0 && opts[0] == true
 	columns := []
 	priority := 46900
 	for chain in chains {
 		for f in FEATURES {
 			for short, alphabet in ALPHABETS {
+				// An amino-acid set has no nucleotide, so only the aa columns exist.
+				if aminoAcid && short == "nt" {
+					continue
+				}
 				// The whole domain in amino acids is what a reader means by
 				// "the sequence", so it is the one marked as such.
 				main := f == "VDJRegion" && short == "aa"
@@ -294,11 +300,17 @@ germlineColumns := func(chains) {
 
 // Length columns, matching mixcr-clonotyping: CDR3 lengths, the junction lengths,
 // and the total added nucleotides. One per side.
-lengthColumns := func(chains) {
+lengthColumns := func(chains, ...opts) {
+	aminoAcid := len(opts) > 0 && opts[0] == true
 	columns := []
 	priority := 43500
 	for chain in chains {
 		for l in LENGTHS {
+			// An amino-acid set has only the CDR3 aa length; the junction and
+			// nt lengths come from MiXCR, which does not run.
+			if aminoAcid && l.alphabet != "aminoacid" {
+				continue
+			}
 			domain := maps.merge({ "pl7.app/alphabet": l.alphabet }, chainDomain(chain))
 			if !is_undefined(l.feature) {
 				domain = maps.merge({ "pl7.app/vdj/feature": l.feature }, domain)
@@ -577,6 +589,7 @@ addAll := func(into, more) {
 // heavy-only set exports no light chain columns at all.
 variantSettings := func(blockId, properties, scheme, sides, ...opts) {
 	nameId := len(opts) > 0 && opts[0] == true
+	aminoAcid := len(opts) > 1 && opts[1] == true
 	chains := CHAINS
 	if !is_undefined(sides) {
 		chains = []
@@ -585,16 +598,22 @@ variantSettings := func(blockId, properties, scheme, sides, ...opts) {
 		}
 	}
 	columns := [cloneIdColumn(), wellsColumn(nameId), pairingColumn()]
-	columns = addAll(columns, sequenceColumns(scheme, chains))
-	columns = addAll(columns, geneColumns(chains))
-	columns = addAll(columns, germlineColumns(chains))
-	columns = addAll(columns, lengthColumns(chains))
-	columns = addAll(columns, flankColumns(chains))
-	columns = addAll(columns, annotationColumns(chains))
-	columns = addAll(columns, germlineSequenceColumns(chains))
+	columns = addAll(columns, sequenceColumns(scheme, chains, aminoAcid))
+	// The gene, germline, flank and segment columns all come from MiXCR, which
+	// does not run for an amino-acid set: no nucleotide, no germline (R31).
+	if !aminoAcid {
+		columns = addAll(columns, geneColumns(chains))
+		columns = addAll(columns, germlineColumns(chains))
+	}
+	columns = addAll(columns, lengthColumns(chains, aminoAcid))
+	if !aminoAcid {
+		columns = addAll(columns, flankColumns(chains))
+		columns = addAll(columns, annotationColumns(chains))
+		columns = addAll(columns, germlineSequenceColumns(chains))
+	}
 	columns = addAll(columns, propertyColumns(properties))
 	return {
-		axes: [keyAxis(blockId)],
+		axes: [keyAxis(blockId, aminoAcid)],
 		columns: columns,
 		storageFormat: "Parquet",
 		partitionKeyLength: 0
@@ -606,8 +625,9 @@ variantSettings := func(blockId, properties, scheme, sides, ...opts) {
 // `[]`, so index 0 does not exist and the split yields nothing.
 abundanceSettings := func(blockId, ...opts) {
 	nameId := len(opts) > 0 && opts[0] == true
+	aminoAcid := len(opts) > 1 && opts[1] == true
 	return {
-		axes: [sampleAxis(blockId, nameId), keyAxis(blockId)],
+		axes: [sampleAxis(blockId, nameId), keyAxis(blockId, aminoAcid)],
 		columns: [abundanceColumn(nameId)],
 		storageFormat: "Parquet",
 		partitionKeyLength: 1
@@ -632,14 +652,15 @@ datasetTrace := func(blockId, label) {
 
 // The `.ab1` read the sequence viewer shows for one chain of a variant. Hidden: it is a
 // file, not something a table or a chart can show.
-traceFileColumn := func(blockId, side) {
+traceFileColumn := func(blockId, side, ...opts) {
+	aminoAcid := len(opts) > 0 && opts[0] == true
 	chain := side == "heavy" ? "IGHeavy" : "IGLight"
 	return {
 		kind: "PColumn",
 		name: "pl7.app/vdj/sequence/traceFile",
 		valueType: "File",
 		domain: maps.merge({ "pl7.app/fileExtension": "ab1" }, chainDomain(chain)),
-		axesSpec: [keyAxis(blockId).spec],
+		axesSpec: [keyAxis(blockId, aminoAcid).spec],
 		annotations: {
 			"pl7.app/label": LABEL[chain] + " Trace File",
 			"pl7.app/hideDataFromUi": "true"

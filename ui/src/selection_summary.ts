@@ -112,9 +112,18 @@ export function checkSelection(files: SelectedFile[], pattern: PathPattern): str
   const out: string[] = [];
   const distinct = (pick: (m: PathPatternMatch) => string) => [...new Set(matches.map(pick))];
 
-  const wells = distinct((m) => `${m.plate?.value ?? ""}\u0000${m.well?.value ?? ""}`);
-  if (wells.length === 1)
-    out.push(`All ${matches.length} files read the same well, ${wellName(matches[0]!)}.`);
+  // A clone's identity is plate and well, or the record name for a name-keyed set.
+  // The name must be in the key, or every name set, whose well is empty, looks like
+  // one clone to the checks below.
+  const identityKey = (m: PathPatternMatch) =>
+    `${m.plate?.value ?? ""}\u0000${m.well?.value ?? ""}\u0000${m.name?.value ?? ""}`;
+  const unit = pattern.hasName ? "records" : "files";
+  const clone = pattern.hasName ? "name" : "well";
+
+  // All records sharing one identity means the pattern reads nothing that tells
+  // them apart.
+  if (distinct(identityKey).length === 1)
+    out.push(`All ${matches.length} ${unit} read the same ${clone}, ${wellName(matches[0]!)}.`);
 
   if (pattern.hasPlate && distinct((m) => m.plate?.value ?? "").length === matches.length)
     out.push(
@@ -137,13 +146,10 @@ export function checkSelection(files: SelectedFile[], pattern: PathPattern): str
   };
 
   if (pattern.hasChain && distinct((m) => m.chain?.value ?? "").length > 1) {
-    const { total, lone } = partners(
-      (m) => `${m.plate?.value ?? ""}\u0000${m.well?.value ?? ""}`,
-      (m) => m.chain?.value ?? "",
-    );
+    const { total, lone } = partners(identityKey, (m) => m.chain?.value ?? "");
     if (lone.length > 0)
       out.push(
-        `${lone.length} of ${total} wells have only one chain, for example ${examples(
+        `${lone.length} of ${total} ${unit === "records" ? "names" : "wells"} have only one chain, for example ${examples(
           lone.map((e) => `${wellName(e.first)} (${e.first.chain?.value ?? ""})`),
         )}.`,
       );
@@ -160,7 +166,7 @@ export function checkSelection(files: SelectedFile[], pattern: PathPattern): str
       );
     if (directions.length > 1) {
       const { total, lone } = partners(
-        (m) => [m.plate?.value ?? "", m.well?.value ?? "", m.chain?.value ?? ""].join("\u0000"),
+        (m) => `${identityKey(m)}\u0000${m.chain?.value ?? ""}`,
         (m) => m.direction?.value ?? "",
       );
       if (lone.length > 0)

@@ -852,7 +852,13 @@ def test_every_chain_word_the_pattern_reads_has_a_class():
 def test_the_detected_chain_prefers_mixcr_where_it_agrees():
     from annotate import detected_chain
     check("MiXCR names the locus", detected_chain({"observedChain": "KL", "mixcrChains": "IGL"}), "IGL")
-    check("no MiXCR hit", detected_chain({"observedChain": "KL"}), "IGK/IGL")
+    check("no MiXCR hit and no ANARCI type", detected_chain({"observedChain": "KL"}), "IGK/IGL")
+    check("ANARCI calls lambda without MiXCR",
+          detected_chain({"observedChain": "KL", "anarciChainType": "L"}), "IGL")
+    check("ANARCI calls kappa without MiXCR",
+          detected_chain({"observedChain": "KL", "anarciChainType": "K"}), "IGK")
+    check("MiXCR locus wins over the ANARCI type",
+          detected_chain({"observedChain": "KL", "mixcrChains": "IGL", "anarciChainType": "K"}), "IGL")
     check("MiXCR disagrees with ANARCI", detected_chain({"observedChain": "H", "mixcrChains": "IGK"}), "IGH")
     check("nothing numbered", detected_chain({"mixcrChains": "IGH"}), "")
 
@@ -992,6 +998,55 @@ def test_one_chain_differing_makes_a_different_clone():
     table = clones_of(rows)
     check("exact identity, nothing looser", len(table), 2)
     check("neither is collapsed", sorted(r["wellCount"] for r in table), ["1", "1"])
+
+
+def sequence_aa(seq_id, well, chain, observed, aa):
+    """An amino-acid sequence: a numbered protein with no nucleotide at all."""
+    e = sequence(seq_id, "Plate1", well, chain, "k" + well, observed)
+    e["aa"] = {"VDJRegion": aa, "CDR3": aa[:6]}
+    return e
+
+
+def clones_of_aa(rows, properties=()):
+    import csv as _csv
+    from annotate import pair_up, write_clones
+    work = tempfile.mkdtemp()
+    pair_up(rows, True)
+    out = os.path.join(work, "clones.tsv")
+    write_clones(out, rows, [{"id": r["id"]} for r in rows], list(properties), amino_acid=True)
+    return list(_csv.DictReader(open(out), delimiter="\t"))
+
+
+def test_variant_key_uses_amino_acid_when_asked():
+    from annotate import variant_key_of
+    pairing = {"heavy": {"aa": {"VDJRegion": "QVQLVE"}}, "light": {"aa": {"VDJRegion": "DIQMTQ"}}}
+    check("the nt alphabet sees no nucleotide", variant_key_of(pairing), None)
+    check("the aa alphabet keys on the protein", variant_key_of(pairing, True), "QVQLVE\x00DIQMTQ")
+
+
+def test_amino_acid_clones_collapse_on_the_protein():
+    rows = [sequence_aa("m0", "A1", "IGH", "H", "QVQLVESGGG"),
+            sequence_aa("m1", "A1", "IGL", "KL", "DIQMTQSPSS"),
+            sequence_aa("m2", "B2", "IGH", "H", "QVQLVESGGG"),
+            sequence_aa("m3", "B2", "IGL", "KL", "DIQMTQSPSS"),
+            sequence_aa("m4", "C3", "IGH", "H", "EVQLVESGGG"),
+            sequence_aa("m5", "C3", "IGL", "KL", "DIQMTQSPSS")]
+    table = clones_of_aa(rows)
+    check("two distinct clones on amino acid", len(table), 2)
+    check("the shared protein is seen twice", table[0]["wellCount"], "2")
+    check("both wells listed", table[0]["wells"], "Plate1 A1, Plate1 B2")
+
+
+def test_amino_acid_collapse_leaves_the_nucleotide_path_alone():
+    # The same shape with nucleotide collapses on nucleotide by default: the aa
+    # switch is off, so nothing about the trace/FASTA-nt flow changes.
+    rows = [sequence_nt("m0", "A1", "IGH", "H", "ACGTACGT"),
+            sequence_nt("m1", "A1", "IGL", "KL", "TTTTTTTT"),
+            sequence_nt("m2", "B2", "IGH", "H", "ACGTACGT"),
+            sequence_nt("m3", "B2", "IGL", "KL", "TTTTTTTT")]
+    table = clones_of(rows)
+    check("one clone, both wells", len(table), 1)
+    check("seen twice", table[0]["wellCount"], "2")
 
 
 def test_wells_that_disagree_on_a_reading_are_marked():

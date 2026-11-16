@@ -1,0 +1,52 @@
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+tracy := import(":tracy")
+
+// Where the staged FASTA files sit inside the job.
+filesDir := "fasta"
+
+// Reads one amino-acid FASTA record per molecule into the reads-stage contract.
+// The record is the protein already: there is no nucleotide and no translation,
+// so the contract carries `frames` (the protein as one frame) but no nucleotide.
+// Quality is inert, as for nucleotide FASTA.
+read := func(input) {
+	readerSw := assets.importSoftware("@platforma-open/milaboratories.clone-annotation.software:read-fasta")
+
+	run := exec.builder().
+		software(readerSw).
+		writeFile(tracy.manifestName, input.manifest).
+		writeFile(tracy.planName, input.plan).
+		mkDir(filesDir).
+		arg(filesDir).
+		arg(tracy.manifestName).
+		arg(tracy.planName).
+		arg("--amino-acid").
+		saveFile(tracy.reportName).
+		saveFile(tracy.peaksName).
+		saveFile(tracy.readsName).
+		saveFile(tracy.framesName).
+		saveFileContent(tracy.reportName).
+		inMediumQueue()
+
+	if input.combined == true {
+		run.arg("--combined")
+	}
+
+	for id, blob in input.blobs {
+		run.addFile(filesDir + "/" + id, blob)
+	}
+
+	result := run.run()
+
+	return {
+		frames: result.getFile(tracy.framesName),
+		peaks: result.getFile(tracy.peaksName),
+		reads: result.getFile(tracy.readsName),
+		report: result.getFile(tracy.reportName),
+		reportContent: result.getFileContent(tracy.reportName)
+	}
+}
+
+export {
+	read: read
+}
