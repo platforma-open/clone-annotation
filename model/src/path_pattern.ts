@@ -15,7 +15,10 @@ export type Range = { from: number; to: number };
 export type Match = { value: string; ranges: Range[] };
 
 export type PathGroups<T> = {
-  well: T;
+  /** Optional: a header-identified set keys on {{Name}} and carries no well. */
+  well?: T;
+  /** A free identity token, for a record header like `Clone-07_HC`. */
+  name?: T;
   plate?: T;
   chain?: T;
   direction?: T;
@@ -28,10 +31,11 @@ export type PathPatternMatch = PathGroups<Match> & {
   sections: (Range | undefined)[];
 };
 
-export type Field = "well" | "plate" | "chain" | "direction";
+export type Field = "well" | "name" | "plate" | "chain" | "direction";
 
 const LABEL: Record<Field, string> = {
   well: "{{Well}}",
+  name: "{{Name}}",
   plate: "{{Plate}}",
   chain: "{{Chain}}",
   direction: "{{Direction}}",
@@ -113,6 +117,8 @@ const DIRECTION_WORDS = ["forward", "reverse", "fwd", "rev", "F", "R", "R1", "R2
 
 const DEFAULT_VALUES: Record<Field, string> = {
   well: WELL,
+  // A free token, like a plate name, but identity-eligible: a header's clone name.
+  name: SEGMENT,
   plate: SEGMENT,
   chain: oneOf(CHAIN_WORDS, anyCase),
   direction: oneOf(DIRECTION_WORDS, anyCase),
@@ -150,11 +156,12 @@ export function fieldAccepts(field: Field, value: string): boolean {
 
 // Longer names first, so `w` does not take the "W" of "Well".
 const TOKEN_BODY =
-  /^\s*(?:(?<field>well|plate|chain|direction|w|p|c|d)|\*?:(?<tag>[a-zA-Z0-9_]+)|(?<any>\*)|(?<anynum>n))\s*(?::(?<list>[^=]*))?(?:=(?<def>.*))?$/i;
+  /^\s*(?:(?<field>well|plate|chain|direction|name|w|p|c|d)|\*?:(?<tag>[a-zA-Z0-9_]+)|(?<any>\*)|(?<anynum>n))\s*(?::(?<list>[^=]*))?(?:=(?<def>.*))?$/i;
 
 const FIELD_OF: Record<string, Field> = {
   well: "well",
   w: "well",
+  name: "name",
   plate: "plate",
   p: "plate",
   chain: "chain",
@@ -235,6 +242,19 @@ export class PathPattern {
     public readonly rawElements: PathGroups<Range[]>,
   ) {}
 
+  public get hasWell(): boolean {
+    return this.slots.well !== undefined;
+  }
+
+  public get hasName(): boolean {
+    return this.slots.name !== undefined;
+  }
+
+  /** A header-identified set: it keys on a name and carries no well. */
+  public get identityIsName(): boolean {
+    return this.hasName && !this.hasWell;
+  }
+
   public get hasPlate(): boolean {
     return this.slots.plate !== undefined;
   }
@@ -298,10 +318,8 @@ export class PathPattern {
       return { value: copies[0]!.value, ranges: copies.flatMap((c) => c.ranges) };
     };
 
-    const well = read(this.slots.well!, LABEL.well);
-    if (well === undefined) throw new Error("{{Well}} matched without a value");
-    const result: PathPatternMatch = { well, anyMatchers: [], sections: [] };
-    for (const field of ["plate", "chain", "direction"] as const) {
+    const result: PathPatternMatch = { anyMatchers: [], sections: [] };
+    for (const field of ["well", "name", "plate", "chain", "direction"] as const) {
       const slot = this.slots[field];
       if (slot === undefined) continue;
       const got = read(slot, LABEL[field]);
@@ -338,7 +356,7 @@ export class PathPattern {
     const tagSlots: Record<string, Slot> = {};
     const anyGroups: number[] = [];
     const sectionGroups: number[] = [];
-    const raw: PathGroups<Range[]> = { well: [], tags: {}, anyMatchers: [] };
+    const raw: PathGroups<Range[]> = { tags: {}, anyMatchers: [] };
 
     const addCopy = (
       slot: Slot,
@@ -395,8 +413,7 @@ export class PathPattern {
           throw new Error(`{{Direction}} takes F/R, fwd/rev, forward/reverse or 1/2, not a list`);
         values = list !== undefined ? oneOf(list, escapeRegExp) : DEFAULT_VALUES[field];
         slot = slots[field] ??= { groups: [], optional: [], ranges: [] };
-        if (field === "well") raw.well.push(range);
-        else (raw[field] ??= []).push(range);
+        (raw[field] ??= []).push(range);
       }
 
       if (def !== undefined && !new RegExp(`^${values}$`).test(def))
@@ -434,7 +451,8 @@ export class PathPattern {
 
     const regexp = "^" + compile(scan(pattern, 0, pattern.length, false), false) + "$";
 
-    if (slots.well === undefined) throw new Error("No {{Well}} matcher in the pattern");
+    if (slots.well === undefined && slots.name === undefined)
+      throw new Error("A pattern needs a {{Well}} or a {{Name}} to identify the clone");
     for (const [field, slot] of Object.entries(slots))
       if (slot.def !== undefined && slot.optional.includes(false))
         throw new Error(
@@ -460,6 +478,7 @@ export type Wrapping = { begin: string; end: string };
 
 export type HighlightOpts = {
   well?: Wrapping;
+  name?: Wrapping;
   plate?: Wrapping;
   chain?: Wrapping;
   direction?: Wrapping;
@@ -481,6 +500,7 @@ export function highlightMatch(path: string, m: PathPatternMatch, opts: Highligh
   };
 
   add(m.well, opts.well);
+  add(m.name, opts.name);
   add(m.plate, opts.plate);
   add(m.chain, opts.chain);
   add(m.direction, opts.direction);

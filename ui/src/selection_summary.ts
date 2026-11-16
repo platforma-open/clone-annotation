@@ -8,9 +8,9 @@ import type { SelectedFile } from "./trace_set";
 export type ValueCount = { value: string; count: number };
 
 export type FieldSummary = {
-  /** What the scientist sees: Plate, Well, Chain, Direction, or a tag's own name. */
+  /** What the scientist sees: Name, Plate, Well, Chain, Direction, or a tag's own name. */
   label: string;
-  kind: "plate" | "well" | "chain" | "direction" | "tag";
+  kind: "name" | "plate" | "well" | "chain" | "direction" | "tag";
   /** Most common first, so a field that captured junk shows its junk at the front. */
   values: ValueCount[];
 };
@@ -39,8 +39,9 @@ export function summarizeFields(files: SelectedFile[], pattern: PathPattern): Fi
   });
 
   const out: FieldSummary[] = [];
+  if (pattern.hasName) out.push(field("Name", "name", (m) => m.name?.value));
   if (pattern.hasPlate) out.push(field("Plate", "plate", (m) => m.plate?.value));
-  out.push(field("Well", "well", (m) => m.well.value));
+  if (pattern.hasWell) out.push(field("Well", "well", (m) => m.well?.value));
   if (pattern.hasChain) out.push(field("Chain", "chain", (m) => m.chain?.value));
   if (pattern.hasDirection) out.push(field("Direction", "direction", (m) => m.direction?.value));
   for (const tag of pattern.tags) out.push(field(tag, "tag", (m) => m.tags?.[tag]?.value));
@@ -60,9 +61,13 @@ export type SelectionGroups = {
 // show as the one read they become.
 function identity(m: PathPatternMatch): string {
   const direction = m.direction ? (readEnd(m.direction.value) ?? m.direction.value) : "";
-  return [m.plate?.value ?? "", normalizeWell(m.well.value), m.chain?.value ?? "", direction].join(
-    "\u0000",
-  );
+  return [
+    m.plate?.value ?? "",
+    m.name?.value ?? "",
+    m.well ? normalizeWell(m.well.value) : "",
+    m.chain?.value ?? "",
+    direction,
+  ].join("\u0000");
 }
 
 export function groupSelection(files: SelectedFile[]): SelectionGroups {
@@ -92,7 +97,8 @@ function examples(values: string[], n = 3): string {
 }
 
 function wellName(m: PathPatternMatch): string {
-  return m.plate ? `${m.plate.value} ${m.well.value}` : m.well.value;
+  const well = m.well?.value ?? m.name?.value ?? "";
+  return m.plate ? `${m.plate.value} ${well}` : well;
 }
 
 /**
@@ -106,7 +112,7 @@ export function checkSelection(files: SelectedFile[], pattern: PathPattern): str
   const out: string[] = [];
   const distinct = (pick: (m: PathPatternMatch) => string) => [...new Set(matches.map(pick))];
 
-  const wells = distinct((m) => `${m.plate?.value ?? ""}\u0000${m.well.value}`);
+  const wells = distinct((m) => `${m.plate?.value ?? ""}\u0000${m.well?.value ?? ""}`);
   if (wells.length === 1)
     out.push(`All ${matches.length} files read the same well, ${wellName(matches[0]!)}.`);
 
@@ -132,7 +138,7 @@ export function checkSelection(files: SelectedFile[], pattern: PathPattern): str
 
   if (pattern.hasChain && distinct((m) => m.chain?.value ?? "").length > 1) {
     const { total, lone } = partners(
-      (m) => `${m.plate?.value ?? ""}\u0000${m.well.value}`,
+      (m) => `${m.plate?.value ?? ""}\u0000${m.well?.value ?? ""}`,
       (m) => m.chain?.value ?? "",
     );
     if (lone.length > 0)
@@ -154,7 +160,7 @@ export function checkSelection(files: SelectedFile[], pattern: PathPattern): str
       );
     if (directions.length > 1) {
       const { total, lone } = partners(
-        (m) => [m.plate?.value ?? "", m.well.value, m.chain?.value ?? ""].join("\u0000"),
+        (m) => [m.plate?.value ?? "", m.well?.value ?? "", m.chain?.value ?? ""].join("\u0000"),
         (m) => m.direction?.value ?? "",
       );
       if (lone.length > 0)

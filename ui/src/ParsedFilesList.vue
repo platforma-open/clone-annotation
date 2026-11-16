@@ -5,7 +5,11 @@ import { computed, useCssModule } from "vue";
 import { groupSelection } from "./selection_summary";
 import type { SelectedFile } from "./trace_set";
 
-const props = defineProps<{ items: SelectedFile[] }>();
+// A combined file matches on record headers, so the counts read "header(s)"; a
+// per-file set reads "file(s)".
+const props = withDefaults(defineProps<{ items: SelectedFile[]; unit?: string }>(), {
+  unit: "file",
+});
 const emit = defineEmits<{ remove: [handles: ImportFileHandle[]] }>();
 
 // Quotes too: a file name also lands inside a quoted attribute.
@@ -64,15 +68,15 @@ function onListClick(e: MouseEvent) {
 <template>
   <div :class="$style.container">
     <span :class="$style.matchText">
-      {{ items.length - unmatchedFiles }} file(s) matched
+      {{ items.length - unmatchedFiles }} {{ props.unit }}(s) matched
       <span :class="$style.unmatchedText">
-        &nbsp;&nbsp;/&nbsp;&nbsp;{{ unmatchedFiles }} file(s) not matched
+        &nbsp;&nbsp;/&nbsp;&nbsp;{{ unmatchedFiles }} {{ props.unit }}(s) not matched
       </span>
     </span>
     <div :class="$style.fileList" class="pl-scrollable" @click="onListClick">
       <details v-if="groups.collisions.length" open data-testid="collisions">
         <summary :class="$style.problem">
-          {{ collidingFiles }} file(s) claim the same plate, well, chain and direction
+          {{ collidingFiles }} {{ props.unit }}(s) claim the same plate, well, chain and direction
         </summary>
         <div
           v-for="(g, i) in groups.collisions"
@@ -83,7 +87,7 @@ function onListClick(e: MouseEvent) {
       </details>
       <details v-for="g in groups.unmatched" :key="g.reason ?? ''" open data-testid="unmatched">
         <summary :class="$style.problem">
-          {{ g.files.length }} file(s) not matched{{ g.reason ? `: ${g.reason}` : "" }}
+          {{ g.files.length }} {{ props.unit }}(s) not matched{{ g.reason ? `: ${g.reason}` : "" }}
           <button
             v-if="g.reason"
             type="button"
@@ -95,13 +99,13 @@ function onListClick(e: MouseEvent) {
               )
             "
           >
-            Remove these files
+            Remove these {{ props.unit }}s
           </button>
         </summary>
         <div v-html="toHtml(g.files)" />
       </details>
       <details v-if="groups.matched.length" :open="!hasProblems" data-testid="matched">
-        <summary>{{ groups.matched.length }} file(s) matched without problems</summary>
+        <summary>{{ groups.matched.length }} {{ props.unit }}(s) matched without problems</summary>
         <div v-html="toHtml(groups.matched)" />
       </details>
     </div>

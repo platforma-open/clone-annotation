@@ -1111,7 +1111,11 @@ def clones_by_key(annotations, accepted=None):
     return {key: list(wells.values()) for key, wells in groups.items()}
 
 
-def well_name(pairing):
+def well_name(pairing, name_only=False):
+    # A name-keyed set lists the record header alone; the "plate" is the file,
+    # which the header already implies, so it is not repeated here.
+    if name_only:
+        return pairing["well"]
     return " ".join(x for x in (pairing["plate"], pairing["well"]) if x)
 
 
@@ -1218,7 +1222,7 @@ def best_verdict(members, by_well):
 
 
 def write_clones(path, annotations, sequences, properties, counts=None, accepted=None,
-                   verdicts=()):
+                   verdicts=(), name_identity=False):
     """One row per distinct clone, with every well it was seen in.
 
     Identity is the nucleotide of both chains, letter for letter, and nothing
@@ -1242,7 +1246,7 @@ def write_clones(path, annotations, sequences, properties, counts=None, accepted
         for members in sorted(groups.values(), key=lambda g: -len(g)):
             first = members[0]
             key = keys[id(members)]
-            row = [key, labels[key], ", ".join(well_name(m) for m in members), len(members),
+            row = [key, labels[key], ", ".join(well_name(m, name_identity) for m in members), len(members),
                    first["status"]]
             row += best_verdict(members, by_well)
             row += side_cells(first["heavy"], by_id) + side_cells(first["light"], by_id)
@@ -1254,7 +1258,7 @@ def write_clones(path, annotations, sequences, properties, counts=None, accepted
                 for m in members:
                     v = prop["values"].get(m["plate"] + "\u0000" + m["well"])
                     if v is not None and v != "":
-                        seen.append((well_name(m), v))
+                        seen.append((well_name(m, name_identity), v))
                 values = [v for _, v in seen]
                 # R15: six wells reading differently is a result in itself, and
                 # one summarised number hides it. A clone whose wells agree
@@ -1559,6 +1563,9 @@ def main(argv=None):
     p.add_argument("--properties", required=False, help="Mapped sheet columns, as JSON")
     p.add_argument("--chains-declared", action="store_true",
                    help="The set states which chain each file holds, so pairing applies")
+    p.add_argument("--name-identity", action="store_true",
+                   help="Clones are keyed by a header name, not a well, so the clone table "
+                        "lists the header alone rather than the file-and-well")
     for bucket in BUCKETS:
         p.add_argument("--csv_%s" % bucket.lower(), required=False)
     args = p.parse_args(argv)
@@ -1723,7 +1730,7 @@ def main(argv=None):
     collapse = {}
     if args.out_clones_tsv:
         write_clones(args.out_clones_tsv, annotations, sequences, properties, collapse,
-                       accepted, verdicts)
+                       accepted, verdicts, name_identity=args.name_identity)
     if args.out_abundance_tsv:
         write_abundance(args.out_abundance_tsv, annotations, accepted)
     if args.out_trace_reads_tsv:

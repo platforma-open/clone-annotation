@@ -126,15 +126,18 @@ keyAxis := func(blockId) {
 	}
 }
 
-// The plate. A variant seen on two plates carries a count for each.
-sampleAxis := func(blockId) {
+// The sample unit, one per imported file. For a plate set it is the plate: a
+// variant seen on two plates carries a count for each. For a header-name set the
+// plate slot holds the source file, so the sample is the file.
+sampleAxis := func(blockId, ...opts) {
+	nameId := len(opts) > 0 && opts[0] == true
 	return {
 		column: "sampleId",
 		spec: {
 			type: "String",
 			name: "pl7.app/sampleId",
 			domain: { "pl7.app/blockId": blockId },
-			annotations: { "pl7.app/label": "Plate" }
+			annotations: { "pl7.app/label": nameId ? "File" : "Plate" }
 		}
 	}
 }
@@ -469,7 +472,8 @@ cloneIdColumn := func() {
 	}
 }
 
-wellsColumn := func() {
+wellsColumn := func(...opts) {
+	nameId := len(opts) > 0 && opts[0] == true
 	return {
 		column: "wells",
 		allowNA: true,
@@ -477,12 +481,14 @@ wellsColumn := func() {
 			name: "pl7.app/vdj/wells",
 			valueType: "String",
 			domain: {},
-			annotations: a("109000", "default", { "pl7.app/label": "Wells" })
+			annotations: a("109000", nameId ? "optional" : "default",
+				{ "pl7.app/label": nameId ? "Sequence IDs" : "Wells" })
 		}
 	}
 }
 
-abundanceColumn := func() {
+abundanceColumn := func(...opts) {
+	nameId := len(opts) > 0 && opts[0] == true
 	return {
 		column: "wellCount",
 		allowNA: false,
@@ -493,7 +499,7 @@ abundanceColumn := func() {
 			valueType: "Long",
 			domain: {},
 			annotations: a("88000", "default", {
-				"pl7.app/label": "Number of Wells",
+				"pl7.app/label": nameId ? "Number of Sequences" : "Number of Wells",
 				"pl7.app/min": "1",
 				"pl7.app/isAbundance": "true",
 				"pl7.app/abundance/unit": "molecules",
@@ -569,7 +575,8 @@ addAll := func(into, more) {
 
 // `sides` lists the sides the set has sequences for. Undefined means both: a
 // heavy-only set exports no light chain columns at all.
-variantSettings := func(blockId, properties, scheme, sides) {
+variantSettings := func(blockId, properties, scheme, sides, ...opts) {
+	nameId := len(opts) > 0 && opts[0] == true
 	chains := CHAINS
 	if !is_undefined(sides) {
 		chains = []
@@ -577,7 +584,7 @@ variantSettings := func(blockId, properties, scheme, sides) {
 			chains = append(chains, CHAIN_OF[side])
 		}
 	}
-	columns := [cloneIdColumn(), wellsColumn(), pairingColumn()]
+	columns := [cloneIdColumn(), wellsColumn(nameId), pairingColumn()]
 	columns = addAll(columns, sequenceColumns(scheme, chains))
 	columns = addAll(columns, geneColumns(chains))
 	columns = addAll(columns, germlineColumns(chains))
@@ -594,13 +601,14 @@ variantSettings := func(blockId, properties, scheme, sides) {
 	}
 }
 
-// Partitioned on the plate axis. A consumer that splits this column addresses the
-// plate by its partition key, and an unpartitioned column has the single empty key
+// Partitioned on the sample axis. A consumer that splits this column addresses the
+// sample by its partition key, and an unpartitioned column has the single empty key
 // `[]`, so index 0 does not exist and the split yields nothing.
-abundanceSettings := func(blockId) {
+abundanceSettings := func(blockId, ...opts) {
+	nameId := len(opts) > 0 && opts[0] == true
 	return {
-		axes: [sampleAxis(blockId), keyAxis(blockId)],
-		columns: [abundanceColumn()],
+		axes: [sampleAxis(blockId, nameId), keyAxis(blockId)],
+		columns: [abundanceColumn(nameId)],
 		storageFormat: "Parquet",
 		partitionKeyLength: 1
 	}

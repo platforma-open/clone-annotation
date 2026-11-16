@@ -44,12 +44,10 @@ axisSpec := {
 
 priority := func(column) {
 	order := {
-		cloneId: 1010, wells: 1000, pairStatus: 980, qcVerdict: 970, qcReason: 960,
+		cloneId: 1010, wellCount: 1000, wells: 999, pairStatus: 980, qcVerdict: 970, qcReason: 960,
 		heavy_chain: 910, heavy_vGene: 900, heavy_cGene: 896, heavy_isotype: 894,
 		heavy_aa_CDR3: 880,
-		light_chain: 875, light_vGene: 870, light_cGene: 866, light_aa_CDR3: 850,
-		// Last of all, after the property columns.
-		wellCount: 1
+		light_chain: 875, light_vGene: 870, light_cGene: 866, light_aa_CDR3: 850
 	}
 	if !is_undefined(order[column]) {
 		return order[column]
@@ -78,15 +76,22 @@ col := func(column, valueType, label, shown) {
 }
 
 // `sides` lists the sides the set has sequences for. Undefined means both.
-settings := func(properties, sides) {
+settings := func(properties, sides, ...opts) {
 	if is_undefined(sides) {
 		sides = SIDES
 	}
+	// A name-keyed set lists the record headers (sequence ids), not wells (option B).
+	nameId := len(opts) > 0 ? opts[0] : false
+	wellsLabel := nameId ? "Sequence IDs" : "Wells"
+	wellCountLabel := nameId ? "Number of Sequences" : "Number of Wells"
+	perWell := nameId ? " (per Sequence)" : " (per Well)"
 
 	columns := [
 		col("cloneId", "String", "Clone Id", true),
-		col("wells", "String", "Wells", true),
-		col("wellCount", "Long", "Number of Wells", false),
+		// The well count shows by default; the full list of wells (which can be
+		// long) is an optional column, so the list is kept but not in the way.
+		col("wellCount", "Long", wellCountLabel, true),
+		col("wells", "String", wellsLabel, false),
 		col("pairStatus", "String", "Pairing", false),
 		col("qcVerdict", "String", "QC Verdict", false),
 		col("qcReason", "String", "QC Reason", false)
@@ -122,7 +127,7 @@ settings := func(properties, sides) {
 			// Every well's value, kept as it stands, beside the summary. R13
 			// asks for both, so neither has to be reconstructed from the other.
 			columns = append(columns,
-				col(base + "_values", "String", p.name + " (per Well)", true))
+				col(base + "_values", "String", p.name + perWell, true))
 			columns = append(columns,
 				col(base + "_disagrees", "String", p.name + " Disagrees", true))
 			for s in SUMMARIES {

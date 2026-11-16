@@ -1,7 +1,7 @@
 import type { PathPattern } from "@platforma-open/milaboratories.clone-annotation.model";
 import { fieldAccepts } from "@platforma-open/milaboratories.clone-annotation.model";
 
-export type Role = "text" | "plate" | "well" | "chain" | "direction" | "tag" | "skip";
+export type Role = "text" | "plate" | "well" | "name" | "chain" | "direction" | "tag" | "skip";
 
 export type Piece = {
   from: number;
@@ -128,6 +128,8 @@ function pieceText(example: string, p: Piece, notes: string[], literal = false):
       if (!fieldAccepts("well", value))
         notes.push(`"${value}" is not a well. A well is a row letter and a column, A1 to P24.`);
       return "{{Well}}";
+    case "name":
+      return "{{Name}}";
     case "plate":
       return "{{Plate}}";
     case "chain":
@@ -191,7 +193,8 @@ export function fromPattern(
     for (const r of ranges)
       if (!inSection(r.from)) spans.push({ from: r.from, to: r.to, role, tag });
   };
-  add(m.well.ranges, "well");
+  if (m.well) add(m.well.ranges, "well");
+  if (m.name) add(m.name.ranges, "name");
   if (m.plate) add(m.plate.ranges, "plate");
   if (m.chain) add(m.chain.ranges, "chain");
   if (m.direction) add(m.direction.ranges, "direction");

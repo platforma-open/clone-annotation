@@ -8,11 +8,22 @@ pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
 xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
 render := import("@platforma-sdk/workflow-tengo:render")
 smart := import("@platforma-sdk/workflow-tengo:smart")
+ll := import("@platforma-sdk/workflow-tengo:ll")
 clones := import(":clones")
 sequenceCols := import(":sequence-cols")
 readCols := import(":read-cols")
 exportSpecs := import(":export-specs")
 tracy := import(":tracy")
+readerTrace := import(":reader-trace")
+readerFastaNt := import(":reader-fasta-nt")
+
+// One reader per input form. Each writes the same reads-stage contract, so the
+// whole annotate -> pair -> collapse -> emit tail is shared. Modelled on
+// samples-and-data's dsProcessors dispatch.
+readers := {
+	"trace": readerTrace,
+	"fastaNt": readerFastaNt
+}
 
 traceFilesTpl := assets.importTemplate(":trace-files")
 
@@ -33,28 +44,60 @@ wf.body(func(args) {
 		traces = []
 	}
 
+	// The fields that identify a clone, in order. The model declares it per form.
+	identity := args.identity
+	if is_undefined(identity) {
+		identity = ["plate", "well"]
+	}
+
+	// Sheet properties and pattern tags together feed the result tables. The
+	// sheet-join QC below (clones.attach) stays on the sheet properties alone, so
+	// a clone that carries a tag but no measurement is still reported as unmeasured.
+	allProps := []
+	if !is_undefined(args.properties) {
+		for p in args.properties {
+			allProps = append(allProps, p)
+		}
+	}
+	if !is_undefined(args.tagProperties) {
+		for p in args.tagProperties {
+			allProps = append(allProps, p)
+		}
+	}
+
 	// Traces are staged under generated ids, not their own names: a path holds
 	// separators and whatever characters the sequencing service used. The
 	// manifest carries the real path back into the report, and the plate the
 	// read quality charts facet on.
+	// A combined file holds many records, so one file is staged once and each of
+	// its records is read by index. Files are deduplicated by handle; a per-file
+	// set has one record per file, read at index 0.
 	manifest := {}
 	blobs := {}
+	fileIds := {}
 	withIds := []
-	for i, t in traces {
-		imp := file.importFile(t.handle)
-		fileImports[t.handle] = imp.handle
+	nextFile := 0
+	for t in traces {
+		fileId := fileIds[t.handle]
+		if is_undefined(fileId) {
+			imp := file.importFile(t.handle)
+			fileImports[t.handle] = imp.handle
+			fileId = fmt.sprintf("t%05d", nextFile)
+			nextFile = nextFile + 1
+			fileIds[t.handle] = fileId
+			blobs[fileId] = imp.file
 
-		id := fmt.sprintf("t%05d", i)
-		plate := "Unplaced"
-		if !is_undefined(t.fields) {
-			plate = t.fields.plate == "" ? "No plate" : t.fields.plate
+			plate := "Unplaced"
+			if !is_undefined(t.fields) {
+				plate = t.fields.plate == "" ? "No plate" : t.fields.plate
+			}
+			manifest[fileId] = { path: t.path, plate: plate }
 		}
-		manifest[id] = { path: t.path, plate: plate }
-		blobs[id] = imp.file
-		withIds = append(withIds, { id: id, path: t.path, fields: t.fields })
+		recordIndex := is_undefined(t.recordIndex) ? 0 : t.recordIndex
+		withIds = append(withIds, { id: fileId, recordIndex: recordIndex, path: t.path, fields: t.fields })
 	}
 
-	grouped := clones.group(traces)
+	grouped := clones.group(traces, identity)
 	joined := clones.attach(grouped, args.properties)
 
 	exports := {}
@@ -76,44 +119,31 @@ wf.body(func(args) {
 		// One sequence per plate, well and chain, naming the reads that should
 		// become it. Built here rather than in the driver so the pattern is read
 		// in one place.
-		plan := clones.sequences(withIds)
+		plan := clones.sequences(withIds, identity)
 
-		tracySw := assets.importSoftware("@platforma-open/milaboratories.software-tracy:main")
-
-		// One job for the whole plate. Tracy reads one file per run, so the
-		// driver loops inside the job rather than the workflow scheduling one
-		// job per well.
-		run := exec.builder().
-			software(tracySw).
-			writeFile(tracy.driverName, tracy.driverScript).
-			writeFile(tracy.manifestName, manifest).
-			writeFile(tracy.planName, plan).
-			mkDir(tracy.callsDir).
-			arg(tracy.driverName).
-			arg(tracy.tracesDir).
-			arg(tracy.callsDir).
-			arg(tracy.manifestName).
-			arg(string(threshold)).
-			arg(tracy.planName).
-			saveFileSet("calls", tracy.callsDir + "/.*\\.fastq").
-			saveFile(tracy.reportName).
-			saveFile(tracy.peaksName).
-			saveFile(tracy.readsName).
-			saveFile(tracy.framesName).
-			saveFile(tracy.nucleotideName).
-			saveFileContent(tracy.reportName).
-			inMediumQueue()
-
-		for id, blob in blobs {
-			run.addFile(tracy.tracesDir + "/" + id, blob)
+		// The reads stage. The form picks the reader; every reader returns the same
+		// contract, so everything below is shared.
+		form := args.form
+		if is_undefined(form) {
+			form = "trace"
+		}
+		reader := readers[form]
+		if is_undefined(reader) {
+			ll.panic("No reader for input form %v", form)
 		}
 
-		result := run.run()
-		outputs.traceReport = result.getFileContent(tracy.reportName)
+		contract := reader.read({
+			blobs: blobs,
+			manifest: manifest,
+			plan: plan,
+			threshold: threshold,
+			combined: args.fileShape == "combined"
+		})
+		outputs.traceReport = contract.reportContent
 
 		readsBuilder := pframes.pFrameBuilder()
 		for id, column in xsv.importFile(
-			result.getFile(tracy.readsName), "tsv",
+			contract.reads, "tsv",
 			readCols.settings(threshold), { splitDataAndSpec: true }
 		) {
 			readsBuilder.add(id, column.spec, column.data)
@@ -141,7 +171,7 @@ wf.body(func(args) {
 		// number nothing, and the step would then fail on a missing output.
 		anarci := exec.builder().
 			software(anarciSw).
-			addFile(tracy.framesName, result.getFile(tracy.framesName)).
+			addFile(tracy.framesName, contract.frames).
 			arg("-i").arg(tracy.framesName).
 			arg("--scheme").arg(scheme).
 			arg("--ncpu").argExpr("{system.cpu}").
@@ -164,7 +194,7 @@ wf.body(func(args) {
 		// trim covers those. See wip/domain-trim-before-mixcr.md.
 		trimmed := exec.builder().
 			software(trimSw).
-			addFile(tracy.nucleotideName, result.getFile(tracy.nucleotideName)).
+			addFile(tracy.nucleotideName, contract.nucleotide).
 			addFile("anarci_H.csv", anarci.getFile("anarci_H.csv")).
 			addFile("anarci_KL.csv", anarci.getFile("anarci_KL.csv")).
 			arg("--sequences").arg(tracy.nucleotideName).
@@ -215,7 +245,7 @@ wf.body(func(args) {
 			{ name: "trimmed.fasta", file: trimmed.getFile("trimmed.fasta") },
 			"J", "alignments.vdjca")
 		alignConstant := mixcrAlign(
-			{ name: tracy.nucleotideName, file: result.getFile(tracy.nucleotideName) },
+			{ name: tracy.nucleotideName, file: contract.nucleotide },
 			"C", "constant.vdjca")
 
 		// The C gene and isotype, from the constant align's full-read alignments. Only these
@@ -303,13 +333,13 @@ wf.body(func(args) {
 
 		annotated := exec.builder().
 			software(annotateSw).
-			addFile(tracy.reportName, result.getFile(tracy.reportName)).
+			addFile(tracy.reportName, contract.report).
 			addFile("anarci_H.csv", anarci.getFile("anarci_H.csv")).
 			addFile("anarci_KL.csv", anarci.getFile("anarci_KL.csv")).
 			addFile("alignments.tsv", exported.getFile("alignments.tsv")).
 			addFile("constant.tsv", exportedConstant.getFile("constant.tsv")).
-			addFile(tracy.nucleotideName, result.getFile(tracy.nucleotideName)).
-			addFile(tracy.peaksName, result.getFile(tracy.peaksName)).
+			addFile(tracy.nucleotideName, contract.nucleotide).
+			addFile(tracy.peaksName, contract.peaks).
 			arg("--report").arg(tracy.reportName).
 			arg("--sequences").arg(tracy.nucleotideName).
 			arg("--peaks").arg(tracy.peaksName).
@@ -318,7 +348,7 @@ wf.body(func(args) {
 			arg("--csv_kl").arg("anarci_KL.csv").
 			arg("--mixcr").arg("alignments.tsv").
 			arg("--constant").arg("constant.tsv").
-			writeFile("properties.json", is_undefined(args.properties) ? [] : args.properties).
+			writeFile("properties.json", allProps).
 			arg("--properties").arg("properties.json").
 			arg("--out").arg("annotation.json").
 			arg("--out_sequences_tsv").arg("sequences.tsv").
@@ -344,6 +374,9 @@ wf.body(func(args) {
 		if chainsDeclared {
 			annotated.arg("--chains-declared")
 		}
+		if args.identityIsName == true {
+			annotated.arg("--name-identity")
+		}
 		if !is_undefined(args.exportWells) {
 			annotated.arg("--export").arg(args.exportWells)
 		}
@@ -356,7 +389,7 @@ wf.body(func(args) {
 		// with its filtering, sorting and column chooser.
 		imported := xsv.importFile(
 			annotatedRun.getFile("sequences.tsv"), "tsv",
-			sequenceCols.settings(args.properties),
+			sequenceCols.settings(allProps, args.identityIsName),
 			{ splitDataAndSpec: true }
 		)
 
@@ -374,9 +407,9 @@ wf.body(func(args) {
 		if is_undefined(label) || label == "" {
 			label = "Clone Annotation"
 		}
-		params := { blockId: blockId, label: label, scheme: scheme }
-		if !is_undefined(args.properties) {
-			params.properties = args.properties
+		params := { blockId: blockId, label: label, scheme: scheme, identityIsName: args.identityIsName }
+		if len(allProps) > 0 {
+			params.properties = allProps
 		}
 		// Ephemeral, because it waits on the run's output before it can say
 		// which columns exist. A pure template may not await.

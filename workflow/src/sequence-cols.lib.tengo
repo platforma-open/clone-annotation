@@ -64,10 +64,13 @@ col := func(column, valueType, label) {
 // `properties` are the sheet's mapped columns. They arrive under the names the
 // scientist's sheet used, so the p-column name is positional and the label
 // carries the real one.
-settings := func(properties) {
+settings := func(properties, ...opts) {
+	// A name-keyed set (a combined FASTA with no well) labels its identity by the
+	// record's header, the "Sequence ID".
+	nameId := len(opts) > 0 ? opts[0] : false
 	columns := [
 		col("plate", "String", "Plate"),
-		col("well", "String", "Well"),
+		col("well", "String", nameId ? "Sequence ID" : "Well"),
 		col("detectedChain", "String", "Chain"),
 		col("chain", "String", "Chain in File Name"),
 		col("qcReason", "String", "QC Reason"),

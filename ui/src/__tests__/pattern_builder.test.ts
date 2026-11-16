@@ -127,7 +127,7 @@ describe("toPattern", () => {
   });
 
   test("a skip glued to the well still reads the well", () => {
-    expect(PathPattern.parse("{{*}}{{Well}}.ab1").match("Run7B05.ab1")?.well.value).toBe("B05");
+    expect(PathPattern.parse("{{*}}{{Well}}.ab1").match("Run7B05.ab1")?.well?.value).toBe("B05");
   });
 
   test("text the grammar would read as syntax is skipped", () => {

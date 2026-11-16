@@ -1,0 +1,57 @@
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+tracy := import(":tracy")
+
+// Reads a plate of Sanger traces into the shared reads-stage contract.
+//
+// `input` carries { blobs, manifest, plan, threshold }: the staged trace files,
+// the id-to-path manifest, the forward/reverse merge plan, and the quality floor.
+//
+// It returns the files the format-agnostic tail consumes. Every reader returns
+// this same shape, so the annotate -> pair -> collapse -> emit tail never knows
+// which form produced it.
+read := func(input) {
+	tracySw := assets.importSoftware("@platforma-open/milaboratories.software-tracy:main")
+
+	// One job for the whole plate. Tracy reads one file per run, so the driver
+	// loops inside the job rather than the workflow scheduling one job per well.
+	run := exec.builder().
+		software(tracySw).
+		writeFile(tracy.driverName, tracy.driverScript).
+		writeFile(tracy.manifestName, input.manifest).
+		writeFile(tracy.planName, input.plan).
+		mkDir(tracy.callsDir).
+		arg(tracy.driverName).
+		arg(tracy.tracesDir).
+		arg(tracy.callsDir).
+		arg(tracy.manifestName).
+		arg(string(input.threshold)).
+		arg(tracy.planName).
+		saveFileSet("calls", tracy.callsDir + "/.*\\.fastq").
+		saveFile(tracy.reportName).
+		saveFile(tracy.peaksName).
+		saveFile(tracy.readsName).
+		saveFile(tracy.framesName).
+		saveFile(tracy.nucleotideName).
+		saveFileContent(tracy.reportName).
+		inMediumQueue()
+
+	for id, blob in input.blobs {
+		run.addFile(tracy.tracesDir + "/" + id, blob)
+	}
+
+	result := run.run()
+
+	return {
+		nucleotide: result.getFile(tracy.nucleotideName),
+		frames: result.getFile(tracy.framesName),
+		peaks: result.getFile(tracy.peaksName),
+		reads: result.getFile(tracy.readsName),
+		report: result.getFile(tracy.reportName),
+		reportContent: result.getFileContent(tracy.reportName)
+	}
+}
+
+export {
+	read: read
+}

@@ -185,10 +185,44 @@ TestAbundanceCarriesTheSampleAxisFirst := func() {
 	test.isEqual(1, len(s.columns))
 }
 
-// A consumer splits the abundance column on the plate axis. An unpartitioned
+// A consumer splits the abundance column on the sample axis. An unpartitioned
 // column has the single empty key `[]`, so index 0 does not exist there.
-TestAbundanceIsPartitionedOnThePlateAxis := func() {
+TestAbundanceIsPartitionedOnTheSampleAxis := func() {
 	test.isEqual(1, exportSpecs.abundanceSettings("blk").partitionKeyLength)
+}
+
+// A header-name set reads one synthetic sample per file. So the sample axis and
+// the abundance count read "File" and "Number of Sequences", not "Plate" and
+// "Number of Wells".
+TestAbundanceRelabelsForANameSet := func() {
+	plate := exportSpecs.abundanceSettings("blk")
+	test.isEqual("Plate", plate.axes[0].spec.annotations["pl7.app/label"])
+	test.isEqual("Number of Wells", plate.columns[0].spec.annotations["pl7.app/label"])
+
+	named := exportSpecs.abundanceSettings("blk", true)
+	test.isEqual("File", named.axes[0].spec.annotations["pl7.app/label"])
+	test.isEqual("Number of Sequences", named.columns[0].spec.annotations["pl7.app/label"])
+}
+
+// The exported variants frame carries the per-clone list column. A header-name
+// set lists sequence ids, not wells, so downstream reads "Sequence IDs".
+TestExportedWellsColumnRelabelsForANameSet := func() {
+	wellsCol := func(settings) {
+		for c in settings.columns {
+			if c.column == "wells" {
+				return c.spec.annotations
+			}
+		}
+		return undefined
+	}
+	plate := wellsCol(exportSpecs.variantSettings("blk", undefined, "imgt", undefined))
+	test.isEqual("Wells", plate["pl7.app/label"])
+	test.isEqual("default", plate["pl7.app/table/visibility"])
+
+	named := wellsCol(exportSpecs.variantSettings("blk", undefined, "imgt", undefined, true))
+	test.isEqual("Sequence IDs", named["pl7.app/label"])
+	// A name set lists sequence ids, not wells, so the column is optional downstream.
+	test.isEqual("optional", named["pl7.app/table/visibility"])
 }
 
 TestVariantColumnsAreNotPartitioned := func() {

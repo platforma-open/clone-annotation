@@ -14,8 +14,16 @@ import {
 } from "@platforma-sdk/ui-vue";
 import { computed, ref } from "vue";
 import { useApp } from "./app";
+import { compilePattern } from "./trace_set";
 
 const app = useApp();
+
+// A name-keyed set (a header with a name and no well) has no plate geometry, so
+// the plate map is dropped and the page labels its rows "Name".
+const identityIsName = computed(
+  () => compilePattern(app.model.data.namePattern ?? "").pattern?.identityIsName ?? false,
+);
+const idWord = computed(() => (identityIsName.value ? "Sequence" : "Well"));
 
 const tableSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.plateSummaryTable,
@@ -37,13 +45,18 @@ const plateMapDefaults = computed((): PredefinedGraphOption<"heatmap">[] | undef
 
 const plateMapNotRun = { noPframe: { title: "Run the block to see the plates" } };
 
-const TABS = [
-  { label: "Plate Map", value: "plateMap" },
-  { label: "QC Metrics", value: "metrics" },
-] as const satisfies readonly { label: string; value: QcTab }[];
+const tabs = computed((): { label: string; value: QcTab }[] =>
+  identityIsName.value
+    ? [{ label: "QC Metrics", value: "metrics" }]
+    : [
+        { label: "Plate Map", value: "plateMap" },
+        { label: "QC Metrics", value: "metrics" },
+      ],
+);
 
 const tab = computed({
-  get: () => app.model.data.qcTab ?? "plateMap",
+  // A name set has no plate map, so it always shows the metrics.
+  get: () => (identityIsName.value ? "metrics" : (app.model.data.qcTab ?? "plateMap")),
   set: (value: QcTab) => (app.model.data.qcTab = value),
 });
 
@@ -76,7 +89,7 @@ const stats = computed(() => {
       ? `Q${threshold.value} (default)`
       : `Q${threshold.value} (default Q${DEFAULT_QUALITY_THRESHOLD})`;
   if (t === undefined) return [{ label: "Quality floor", value: floor }];
-  return [
+  const rows = [
     { label: "Plates", value: String(t.plates) },
     { label: "Wells", value: String(t.wells) },
     { label: "Passed", value: `${t.passed} (${percent(t.passedShare)})` },
@@ -96,6 +109,17 @@ const stats = computed(() => {
     { label: "Clonal redundancy", value: percent(t.redundantShare) },
     { label: "Quality floor", value: floor },
   ];
+  // A name set groups by file, not plate, and counts sequences, not wells.
+  if (identityIsName.value) {
+    return rows.map((r) =>
+      r.label === "Plates"
+        ? { label: "Files", value: r.value }
+        : r.label === "Wells"
+          ? { label: "Sequences", value: r.value }
+          : r,
+    );
+  }
+  return rows;
 });
 
 // A sheet joins on plate and well, so a typo on either side silently leaves a
@@ -103,11 +127,11 @@ const stats = computed(() => {
 const sheetLists = computed(() =>
   [
     {
-      label: "Wells no property reached",
+      label: `${idWord.value}s no property reached`,
       items: app.model.outputs.wellsWithoutProperties ?? [],
     },
     {
-      label: "Sheet rows that hit no well",
+      label: `Sheet rows that hit no ${idWord.value.toLowerCase()}`,
       items: app.model.outputs.valuesWithoutWell ?? [],
     },
   ].filter((l) => l.items.length > 0),
@@ -117,7 +141,7 @@ const sheetLists = computed(() =>
 <template>
   <!-- The map takes the full width, so the gutters come off on its tab. -->
   <PlBlockPage :no-body-gutters="tab === 'plateMap'">
-    <template #title>Plate View</template>
+    <template #title>{{ identityIsName ? "Sequence QC" : "Plate View" }}</template>
 
     <template #append>
       <!-- The table puts its own controls (Filters, Columns) right before this slot.
@@ -135,7 +159,7 @@ const sheetLists = computed(() =>
             <PlMaskIcon24 name="statistics" />
           </template>
         </PlBtnGhost>
-        <PlTabs v-model="tab" :class="$style.tabs" :options="TABS" :top-line="false" />
+        <PlTabs v-model="tab" :class="$style.tabs" :options="tabs" :top-line="false" />
       </div>
     </template>
 

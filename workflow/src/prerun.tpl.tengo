@@ -4,6 +4,9 @@
 
 wf := import("@platforma-sdk/workflow-tengo:workflow")
 file := import("@platforma-sdk/workflow-tengo:file")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+fmt := import("fmt")
 
 wf.body(func(args) {
 	outputs := {}
@@ -14,6 +17,25 @@ wf.body(func(args) {
 		imports[args.propertyFile] = imp.handle
 		outputs.propertyFileImports = imports
 		outputs.propertyFile = file.exportFile(imp.file)
+	}
+
+	// A combined FASTA keys its clones on the record headers inside the file. The
+	// headers are pulled out here, cheaply (no sequences), so the UI matches them
+	// without ever reading the files. One header list per file, in file order.
+	if args.fileShape == "combined" && !is_undefined(args.traceFiles) && len(args.traceFiles) > 0 {
+		readerSw := assets.importSoftware("@platforma-open/milaboratories.clone-annotation.software:read-fasta")
+		run := exec.builder().
+			software(readerSw).
+			mkDir("fasta").
+			arg("--headers").
+			arg("fasta").
+			arg(string(len(args.traceFiles)))
+		for i, handle in args.traceFiles {
+			imp := file.importFile(handle)
+			run.addFile("fasta/" + fmt.sprintf("f%05d", i), imp.file)
+		}
+		result := run.saveFileContent("headers.json").inMediumQueue().run()
+		outputs.fastaFileHeaders = result.getFileContent("headers.json")
 	}
 
 	return {

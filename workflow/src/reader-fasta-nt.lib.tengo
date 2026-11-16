@@ -1,0 +1,59 @@
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+tracy := import(":tracy")
+
+// Where the staged FASTA files sit inside the job. The manifest and plan reuse
+// the trace driver's names; the reader writes the same contract file names, so
+// the shared tail reads them unchanged.
+filesDir := "fasta"
+
+// Reads one nucleotide FASTA record per molecule into the shared reads-stage
+// contract. `input` carries { blobs, manifest, plan, threshold }; the threshold
+// is unused because a FASTA carries no quality.
+//
+// Returns the same shape as the trace reader, with the quality files inert: an
+// empty peaks map and a header-only reads table.
+read := func(input) {
+	readerSw := assets.importSoftware("@platforma-open/milaboratories.clone-annotation.software:read-fasta")
+
+	run := exec.builder().
+		software(readerSw).
+		writeFile(tracy.manifestName, input.manifest).
+		writeFile(tracy.planName, input.plan).
+		mkDir(filesDir).
+		arg(filesDir).
+		arg(tracy.manifestName).
+		arg(tracy.planName).
+		saveFile(tracy.reportName).
+		saveFile(tracy.peaksName).
+		saveFile(tracy.readsName).
+		saveFile(tracy.framesName).
+		saveFile(tracy.nucleotideName).
+		saveFileContent(tracy.reportName).
+		inMediumQueue()
+
+	// A combined file keys its per-record reads by file-and-index, so one record's
+	// length and status does not stand for every record in the file.
+	if input.combined == true {
+		run.arg("--combined")
+	}
+
+	for id, blob in input.blobs {
+		run.addFile(filesDir + "/" + id, blob)
+	}
+
+	result := run.run()
+
+	return {
+		nucleotide: result.getFile(tracy.nucleotideName),
+		frames: result.getFile(tracy.framesName),
+		peaks: result.getFile(tracy.peaksName),
+		reads: result.getFile(tracy.readsName),
+		report: result.getFile(tracy.reportName),
+		reportContent: result.getFileContent(tracy.reportName)
+	}
+}
+
+export {
+	read: read
+}
