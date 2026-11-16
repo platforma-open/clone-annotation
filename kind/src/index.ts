@@ -20,7 +20,7 @@ export type NumberingScheme = "imgt" | "kabat" | "chothia";
 export type ExportWells = "passed" | "passedAndWarning" | "all";
 
 /** The input form a set is read as. Declared by the scientist, never sniffed from the files. */
-export type InputForm = "trace" | "fastaNt" | "fastaAa";
+export type InputForm = "trace" | "fastaNt" | "fastaAa" | "fastqNt";
 
 /**
  * Species MiXCR can align against out of its bundled reference library. Spelled
@@ -75,7 +75,7 @@ export type BlockParams = {
 
 const NUMBERING_SCHEMES: NumberingScheme[] = ["imgt", "kabat", "chothia"];
 const EXPORT_WELLS: ExportWells[] = ["passed", "passedAndWarning", "all"];
-const INPUT_FORMS: InputForm[] = ["trace", "fastaNt", "fastaAa"];
+const INPUT_FORMS: InputForm[] = ["trace", "fastaNt", "fastaAa", "fastqNt"];
 const SPECIES: Species[] = [
   "alpaca",
   "salmon",

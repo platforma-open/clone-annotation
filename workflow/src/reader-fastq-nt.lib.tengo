@@ -1,0 +1,56 @@
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+tracy := import(":tracy")
+
+// Where the staged FASTQ files sit inside the job.
+filesDir := "fasta"
+
+// Reads one nucleotide FASTQ record per molecule into the shared reads-stage
+// contract. Unlike FASTA, a FASTQ carries real Phred, so each read is trimmed to
+// the stretch at the quality floor and its mean quality travels with it. The rest
+// of the contract is the nucleotide form's: six-frame protein, nucleotide, and a
+// real reads table that lights up the read-quality charts.
+read := func(input) {
+	readerSw := assets.importSoftware("@platforma-open/milaboratories.clone-annotation.software:read-fasta")
+
+	run := exec.builder().
+		software(readerSw).
+		writeFile(tracy.manifestName, input.manifest).
+		writeFile(tracy.planName, input.plan).
+		mkDir(filesDir).
+		arg(filesDir).
+		arg(tracy.manifestName).
+		arg(tracy.planName).
+		arg("--fastq").
+		arg("--floor").arg(string(input.threshold)).
+		saveFile(tracy.reportName).
+		saveFile(tracy.peaksName).
+		saveFile(tracy.readsName).
+		saveFile(tracy.framesName).
+		saveFile(tracy.nucleotideName).
+		saveFileContent(tracy.reportName).
+		inMediumQueue()
+
+	if input.combined == true {
+		run.arg("--combined")
+	}
+
+	for id, blob in input.blobs {
+		run.addFile(filesDir + "/" + id, blob)
+	}
+
+	result := run.run()
+
+	return {
+		nucleotide: result.getFile(tracy.nucleotideName),
+		frames: result.getFile(tracy.framesName),
+		peaks: result.getFile(tracy.peaksName),
+		reads: result.getFile(tracy.readsName),
+		report: result.getFile(tracy.reportName),
+		reportContent: result.getFileContent(tracy.reportName)
+	}
+}
+
+export {
+	read: read
+}

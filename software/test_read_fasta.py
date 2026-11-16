@@ -125,6 +125,92 @@ def test_a_combined_file_yields_one_sequence_per_record_by_index():
     check("nothing set aside", set_aside, [])
 
 
+def write_fastq_set():
+    tmp = pathlib.Path(tempfile.mkdtemp())
+    files = tmp / "fasta"
+    files.mkdir()
+    # Q40 everywhere: the whole read clears the floor.
+    (files / "t00000").write_text("@VH1 heavy\n%s\n+\n%s\n" % (HEAVY, "I" * len(HEAVY)))
+    # Q0 everywhere: noise end to end, nothing survives trimming.
+    (files / "t00001").write_text("@VH2\n%s\n+\n%s\n" % (HEAVY, "!" * len(HEAVY)))
+    manifest = {
+        "t00000": {"path": "VH1_H.fastq", "plate": "P1"},
+        "t00001": {"path": "VH2_H.fastq", "plate": "P1"},
+    }
+    return files, manifest
+
+
+def test_a_fastq_read_carries_real_quality_and_a_nucleotide():
+    files, manifest = write_fastq_set()
+    plan = [{"plate": "P1", "well": "A1", "chain": "H", "pairKey": "P1\x00A1",
+             "forward": "t00000", "extra": 0}]
+    sequences, set_aside, reads, nt, frames = reader.build(
+        plan, manifest, files, fastq=True, floor=20)
+    check("one sequence", len(sequences), 1)
+    check("high quality read kept whole", reads[0]["usableLength"], len(HEAVY))
+    check("mean quality reported", reads[0]["meanQuality"], 40.0)
+    check("quality source is the read", reads[0]["qualitySource"], "read")
+    check("sequence carries the mean quality", sequences[0]["meanQuality"], 40.0)
+    check("nucleotide written for MiXCR", nt[0].startswith(">s00000\n"), True)
+    check("at least one frame", len(frames) >= 1, True)
+    check("nothing set aside", set_aside, [])
+
+
+def test_a_fastq_read_below_the_floor_is_set_aside():
+    files, manifest = write_fastq_set()
+    plan = [{"plate": "P1", "well": "B2", "chain": "H", "pairKey": "P1\x00B2",
+             "forward": "t00001", "extra": 0}]
+    sequences, set_aside, reads, nt, frames = reader.build(
+        plan, manifest, files, fastq=True, floor=20)
+    check("set aside with a reason", len(set_aside), 1)
+    check("the sequence is kept as a result", sequences[0]["source"], "none")
+    check("no nucleotide for it", nt, [])
+
+
+def test_a_combined_fastq_writes_distinct_read_keys():
+    # A combined file stages once under one id, so the read-quality table must key
+    # each record by its path (file#index), not the shared file id.
+    import json
+    import os
+    tmp = pathlib.Path(tempfile.mkdtemp())
+    files = tmp / "fasta"
+    files.mkdir()
+    hi = "I" * len(HEAVY)
+    (files / "f0").write_text("@recA\n%s\n+\n%s\n@recB\n%s\n+\n%s\n" % (HEAVY, hi, HEAVY, hi))
+    (tmp / "traces.json").write_text(json.dumps({"f0": {"path": "combined.fastq", "plate": ""}}))
+    (tmp / "sequences.json").write_text(json.dumps([
+        {"well": "A1", "chain": "", "pairKey": "A1", "forward": "f0", "recordIndex": 0, "extra": 0},
+        {"well": "A2", "chain": "", "pairKey": "A2", "forward": "f0", "recordIndex": 1, "extra": 0}]))
+    cwd = pathlib.Path.cwd()
+    os.chdir(tmp)
+    try:
+        reader.main(["read_fasta.py", str(files), "traces.json", "sequences.json",
+                     "--fastq", "--combined", "--floor", "20"])
+        keys = [r.split("\t")[0] for r in (tmp / "reads.tsv").read_text().splitlines()[1:]]
+        check("two read rows", len(keys), 2)
+        check("keys are distinct", len(set(keys)), 2)
+        check("keyed by file#index", sorted(keys), ["combined.fastq#0", "combined.fastq#1"])
+    finally:
+        os.chdir(cwd)
+
+
+def test_a_gzipped_fastq_is_read_transparently():
+    import gzip
+    tmp = pathlib.Path(tempfile.mkdtemp())
+    files = tmp / "fasta"
+    files.mkdir()
+    (files / "t00000").write_bytes(gzip.compress(
+        ("@VH1 heavy\n%s\n+\n%s\n" % (HEAVY, "I" * len(HEAVY))).encode()))
+    manifest = {"t00000": {"path": "VH1_H.fastq.gz", "plate": "P1"}}
+    plan = [{"plate": "P1", "well": "A1", "chain": "H", "pairKey": "P1\x00A1",
+             "forward": "t00000", "extra": 0}]
+    sequences, set_aside, reads, nt, frames = reader.build(
+        plan, manifest, files, fastq=True, floor=20)
+    check("the gzipped read is parsed", len(sequences), 1)
+    check("decompressed and kept whole", reads[0]["usableLength"], len(HEAVY))
+    check("nucleotide written for MiXCR", nt[0].startswith(">s00000\n"), True)
+
+
 # A variable domain as protein, which is what an amino-acid FASTA carries.
 PROTEIN = ("QVQLVESGGGLVQPGGSLRLSCAASGFTFSSYAMSWVRQAPGKGLEWVSAISGSGGSTYYADSVKG"
            "RFTISRDNSKNTLYLQMNSLRAEDTAVYYCAKDIGGFDYWGQGTLVTVSS")

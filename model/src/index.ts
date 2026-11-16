@@ -73,6 +73,7 @@ export const INPUT_FORM_OPTIONS = [
   { label: "Sanger trace (.ab1, .scf)", value: "trace" },
   { label: "FASTA, nucleotide", value: "fastaNt" },
   { label: "FASTA, amino acid", value: "fastaAa" },
+  { label: "FASTQ, nucleotide", value: "fastqNt" },
 ] as const;
 
 export const FILE_SHAPE_OPTIONS = [
@@ -583,6 +584,8 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   .prerunArgs((data) => ({
     propertyFile: data.propertyFile,
     fileShape: data.fileShape,
+    // The header extractor reads @-lines for FASTQ, >-lines otherwise.
+    form: data.form ?? "trace",
     // Only the combined shape needs its files in prerun (to read headers). The
     // per-file shape keeps its many files in the main run.
     traceFiles: (data.fileShape ?? "perFile") === "combined" ? (data.traceFiles ?? []) : [],
@@ -854,9 +857,9 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       { type: "link", href: "/", label: "Files" },
       { type: "link", href: "/qc", label: nameId ? "Sequence QC" : "Plate View" },
     ];
-    // Read Quality charts Phred per read, which only a trace carries; both FASTA
+    // Read Quality charts Phred per read. A trace and a FASTQ carry it; both FASTA
     // forms are letters only.
-    if (ctx.data.form === "trace") {
+    if (ctx.data.form === "trace" || ctx.data.form === "fastqNt") {
       sections.push({ type: "link", href: "/read-quality", label: "Read Quality" });
     }
     sections.push({ type: "link", href: "/results", label: "Results" });

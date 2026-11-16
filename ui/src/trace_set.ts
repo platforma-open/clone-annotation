@@ -16,14 +16,23 @@ export const TRACE_EXTENSIONS = ["ab1", "abi", "ab", "scf"];
 /** Nucleotide FASTA, under the names it arrives with. */
 export const FASTA_NT_EXTENSIONS = ["fasta", "fa", "fna", "fas"];
 
-/** Every extension the picker offers. The form is guessed from the selection, so
- * the picker is not narrowed to one form up front. */
-export const ALL_EXTENSIONS = [...TRACE_EXTENSIONS, ...FASTA_NT_EXTENSIONS];
+/** FASTQ, under the names it arrives with. */
+export const FASTQ_EXTENSIONS = ["fastq", "fq"];
 
-/** Either FASTA form. Both read from a `.fasta`-family file and share the
- * combined / per-file door; only the alphabet differs. */
-export function isFastaForm(form: InputForm): boolean {
-  return form === "fastaNt" || form === "fastaAa";
+/** Every extension the picker offers. The form is guessed from the selection, so
+ * the picker is not narrowed to one form up front. `gz` lets a gzipped read
+ * through; the reader decompresses it by its magic bytes. */
+export const ALL_EXTENSIONS = [
+  ...TRACE_EXTENSIONS,
+  ...FASTA_NT_EXTENSIONS,
+  ...FASTQ_EXTENSIONS,
+  "gz",
+];
+
+/** A FASTA or FASTQ form. All read many-record files, so they share the combined /
+ * per-file door; a trace is always one file per clone. */
+export function isMultiRecordForm(form: InputForm): boolean {
+  return form === "fastaNt" || form === "fastaAa" || form === "fastqNt";
 }
 
 /** The form a selection looks like, from the file extensions. One set is one
@@ -32,12 +41,19 @@ export function isFastaForm(form: InputForm): boolean {
  * the two share an extension. */
 export function guessForm(handles: ImportFileHandle[]): InputForm {
   let fasta = 0;
+  let fastq = 0;
   let trace = 0;
   for (const handle of handles) {
-    const ext = getFilePathFromHandle(handle).split(".").pop()?.toLowerCase() ?? "";
-    if (FASTA_NT_EXTENSIONS.includes(ext)) fasta++;
+    // A gzipped read keeps its real extension before a trailing .gz, so the .gz
+    // is dropped before the real extension is read.
+    let name = getFilePathFromHandle(handle).toLowerCase();
+    if (name.endsWith(".gz")) name = name.slice(0, -3);
+    const ext = name.split(".").pop() ?? "";
+    if (FASTQ_EXTENSIONS.includes(ext)) fastq++;
+    else if (FASTA_NT_EXTENSIONS.includes(ext)) fasta++;
     else if (TRACE_EXTENSIONS.includes(ext)) trace++;
   }
+  if (fastq > fasta && fastq > trace) return "fastqNt";
   return fasta > trace ? "fastaNt" : "trace";
 }
 

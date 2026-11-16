@@ -17,15 +17,17 @@ tracy := import(":tracy")
 readerTrace := import(":reader-trace")
 readerFastaNt := import(":reader-fasta-nt")
 readerFastaAa := import(":reader-fasta-aa")
+readerFastqNt := import(":reader-fastq-nt")
 
 // One reader per input form. Each writes the same reads-stage contract, so the
 // whole annotate -> pair -> collapse -> emit tail is shared. Modelled on
 // samples-and-data's dsProcessors dispatch. The amino-acid reader writes no
-// nucleotide, so its tail skips MiXCR.
+// nucleotide, so its tail skips MiXCR. The FASTQ reader trims by the quality floor.
 readers := {
 	"trace": readerTrace,
 	"fastaNt": readerFastaNt,
-	"fastaAa": readerFastaAa
+	"fastaAa": readerFastaAa,
+	"fastqNt": readerFastqNt
 }
 
 traceFilesTpl := assets.importTemplate(":trace-files")

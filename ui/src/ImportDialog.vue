@@ -29,15 +29,17 @@ import {
   describeCombined,
   describeSelection,
   guessForm,
-  isFastaForm,
+  isMultiRecordForm,
 } from "./trace_set";
 
 const app = useApp();
 
 // The combined early-commit below writes the picked files straight to the live
-// model, so prerun can read their headers. If the scientist cancels instead of
-// importing, these three fields are put back to what they were before the dialog.
+// model, so prerun can read their headers. The form rides along, because prerun
+// reads @-lines for FASTQ and >-lines otherwise. If the scientist cancels instead
+// of importing, these fields are put back to what they were before the dialog.
 const saved = {
+  form: app.model.data.form,
   fileShape: app.model.data.fileShape,
   traceFiles: app.model.data.traceFiles,
   fastaHeaders: app.model.data.fastaHeaders,
@@ -61,16 +63,23 @@ const draft = reactive({
 // other shapes key on the file path. Vue reads `{{` as interpolation, so the
 // token examples live here, not in the template.
 const example = computed(() => {
-  if (isFastaForm(draft.form)) {
+  if (isMultiRecordForm(draft.form)) {
+    const ext = draft.form === "fastqNt" ? ".fastq" : ".fasta";
     return draft.fileShape === "combined"
       ? "{{Name}}_{{Chain}}"
-      : "{{Plate}}/{{Well}}_{{Chain}}.fasta";
+      : `{{Plate}}/{{Well}}_{{Chain}}${ext}`;
   }
   return "{{Plate}}_{{Chain}}_{{Direction}}_{{Well}}.ab1";
 });
 
-const isCombined = computed(() => isFastaForm(draft.form) && draft.fileShape === "combined");
-const title = computed(() => (isFastaForm(draft.form) ? "Import FASTA" : "Import traces"));
+const isCombined = computed(() => isMultiRecordForm(draft.form) && draft.fileShape === "combined");
+const title = computed(() =>
+  draft.form === "fastqNt"
+    ? "Import FASTQ"
+    : isMultiRecordForm(draft.form)
+      ? "Import FASTA"
+      : "Import traces",
+);
 
 // Closing both is how the scientist cancels out of importing altogether.
 watch(
@@ -80,6 +89,7 @@ watch(
     // Cancelled without importing: undo the combined early-commit so the model
     // does not keep a set the scientist backed out of.
     if (!imported) {
+      app.model.data.form = saved.form;
       app.model.data.fileShape = saved.fileShape;
       app.model.data.traceFiles = saved.traceFiles;
       app.model.data.fastaHeaders = saved.fastaHeaders;
@@ -102,9 +112,10 @@ watch([() => draft.form, () => draft.fileShape], () => {
 // the record headers and the scientist can build the pattern against them. The
 // headers come back in BlockData.fastaHeaders. Every other shape waits for Import.
 watch(
-  [() => isCombined.value, () => draft.files],
+  [() => isCombined.value, () => draft.files, () => draft.form],
   () => {
     if (isCombined.value && draft.files.length > 0) {
+      app.model.data.form = draft.form;
       app.model.data.fileShape = "combined";
       app.model.data.traceFiles = [...draft.files];
     }
@@ -157,8 +168,8 @@ function doImport() {
   imported = true;
   app.model.data.name = draft.name.trim();
   app.model.data.form = draft.form;
-  // Only a FASTA set can be combined; every other form is one record per file.
-  app.model.data.fileShape = isFastaForm(draft.form) ? draft.fileShape : "perFile";
+  // Only a FASTA or FASTQ set can be combined; a trace is one record per file.
+  app.model.data.fileShape = isMultiRecordForm(draft.form) ? draft.fileShape : "perFile";
   app.model.data.namePattern = draft.pattern;
   app.model.data.traceFiles = draft.files;
   draft.formOpen = false;
@@ -185,12 +196,12 @@ function doImport() {
       <template #tooltip>
         What the files hold. The whole set is one form. A Sanger trace is read and merged; a
         nucleotide FASTA is read as it stands; an amino-acid FASTA is numbered as protein, with no
-        germline.
+        germline; a FASTQ is read and trimmed by its quality.
       </template>
     </PlDropdown>
 
     <PlDropdown
-      v-if="isFastaForm(draft.form)"
+      v-if="isMultiRecordForm(draft.form)"
       v-model="draft.fileShape"
       :options="FILE_SHAPE_OPTIONS"
       :required="true"

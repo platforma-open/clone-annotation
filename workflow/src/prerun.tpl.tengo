@@ -30,6 +30,10 @@ wf.body(func(args) {
 			arg("--headers").
 			arg("fasta").
 			arg(string(len(args.traceFiles)))
+		// FASTQ headers are @-lines every fourth line, not >-lines.
+		if args.form == "fastqNt" {
+			run.arg("--fastq")
+		}
 		for i, handle in args.traceFiles {
 			imp := file.importFile(handle)
 			run.addFile("fasta/" + fmt.sprintf("f%05d", i), imp.file)

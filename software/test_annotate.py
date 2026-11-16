@@ -598,7 +598,7 @@ def test_trim_cuts_the_leader_and_the_tail():
     import trim
     # A 21 nt leader, a 30 nt domain (10 residues from protein index 7), a 48 nt tail.
     read = "A" * 21 + "C" * 30 + "G" * 48
-    best = ("H", 0, (["1"] * 10, ["A"] * 10, 100.0, 7), 100.0)
+    best = ("H", 0, (["1"] * 10, ["A"] * 10, 100.0, 7, "H"), 100.0)
     # Span (21, 51); with the 9 nt margin the cut is read[12:60].
     check("the leader and tail are cut to the domain plus a margin",
           trim.trim(read, best), "A" * 9 + "C" * 30 + "G" * 9)
@@ -609,9 +609,27 @@ def test_trim_uses_the_numbered_strand_for_a_reverse_frame():
     from annotate import reverse_complement
     strand = "A" * 21 + "C" * 30 + "G" * 48
     read = reverse_complement(strand)
-    best = ("H", 3, (["1"] * 10, ["A"] * 10, 100.0, 7), 100.0)
+    best = ("H", 3, (["1"] * 10, ["A"] * 10, 100.0, 7, "H"), 100.0)
     check("a reverse frame is cut on its own strand, domain forward",
           trim.trim(read, best), "A" * 9 + "C" * 30 + "G" * 9)
+
+
+def test_pick_frame_tuple_matches_what_trim_and_annotate_unpack():
+    # A real read_anarci -> pick_frame path. The trim tests above hand-build the
+    # tuple; this one reads it, so a change to read_anarci's arity breaks here
+    # rather than silently in the nucleotide forms' trim at run time.
+    from annotate import pick_frame, read_anarci
+    work = tempfile.mkdtemp()
+    path = os.path.join(work, "anarci_H.csv")
+    with open(path, "w") as h:
+        h.write("Id,domain_no,hmm_species,chain_type,e-value,score,seqstart_index,seqend_index,1,2,3\n")
+        h.write("s00001|0,0,human,H,1e-50,100.0,0,9,A,C,D\n")
+    best = pick_frame("s00001", {"H": read_anarci(path)})
+    check("a domain was found", best is not None, True)
+    _bucket, _frame, found, _score = best
+    check("the found tuple has five parts", len(found), 5)
+    _labels, _residues, _sc, _start, chain_type = found
+    check("the chain type is read from the CSV", chain_type, "H")
 
 
 def test_trim_keeps_the_whole_read_without_numbering():
