@@ -453,25 +453,29 @@ wf.body(func(args) {
 		outputs.variants = pframes.exportFrame(tables.output("variants"))
 
 		// One `.ab1` per variant and chain for the viewer, keyed as the variants are.
-		staged := pcolumn.resourceMapBuilder(1)
-		idOf := {}
-		for id, blob in blobs {
-			staged.add([id], blob)
-			idOf[manifest[id].path] = id
+		// Only a trace is an `.ab1`: a FASTA or FASTQ file would be served as a trace
+		// the viewer cannot read, so the trace-file columns are a trace-only output.
+		if form == "trace" {
+			staged := pcolumn.resourceMapBuilder(1)
+			idOf := {}
+			for id, blob in blobs {
+				staged.add([id], blob)
+				idOf[manifest[id].path] = id
+			}
+			traceFiles := render.createEphemeral(traceFilesTpl, {
+				params: smart.createJsonResource({ idOf: idOf }),
+				traces: staged.build(),
+				traceReads: annotatedRun.getFileContent("trace_reads.tsv")
+			})
+			trace := exportSpecs.datasetTrace(blockId, label)
+			traceFilesBuilder := pframes.pFrameBuilder()
+			for side in ["heavy", "light"] {
+				traceFilesBuilder.add(side + "_trace_file",
+					trace.inject(exportSpecs.traceFileColumn(blockId, side, isAminoAcid)),
+					traceFiles.output(side))
+			}
+			outputs.traceFiles = pframes.exportFrame(traceFilesBuilder.build())
 		}
-		traceFiles := render.createEphemeral(traceFilesTpl, {
-			params: smart.createJsonResource({ idOf: idOf }),
-			traces: staged.build(),
-			traceReads: annotatedRun.getFileContent("trace_reads.tsv")
-		})
-		trace := exportSpecs.datasetTrace(blockId, label)
-		traceFilesBuilder := pframes.pFrameBuilder()
-		for side in ["heavy", "light"] {
-			traceFilesBuilder.add(side + "_trace_file",
-				trace.inject(exportSpecs.traceFileColumn(blockId, side, isAminoAcid)),
-				traceFiles.output(side))
-		}
-		outputs.traceFiles = pframes.exportFrame(traceFilesBuilder.build())
 	}
 
 	return {

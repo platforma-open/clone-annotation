@@ -451,8 +451,14 @@ export class PathPattern {
 
     const regexp = "^" + compile(scan(pattern, 0, pattern.length, false), false) + "$";
 
-    if (slots.well === undefined && slots.name === undefined)
-      throw new Error("A pattern needs a {{Well}} or a {{Name}} to identify the clone");
+    // A well or name only inside [ ] leaves records with no identity, which would
+    // all collapse into one clone. One copy must sit outside [ ], so every record
+    // carries it.
+    const guaranteedIdentity =
+      (slots.well !== undefined && slots.well.optional.includes(false)) ||
+      (slots.name !== undefined && slots.name.optional.includes(false));
+    if (!guaranteedIdentity)
+      throw new Error("A pattern needs a {{Well}} or a {{Name}} outside [ ] to identify the clone");
     for (const [field, slot] of Object.entries(slots))
       if (slot.def !== undefined && slot.optional.includes(false))
         throw new Error(

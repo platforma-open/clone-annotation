@@ -416,6 +416,24 @@ function fileLabel(handle: ImportFileHandle): string {
   return basename(getFilePathFromHandle(handle));
 }
 
+/**
+ * A label that singles each file out, for grouping a combined set's records by
+ * their file. The basename reads well and is used where it is unique; two files
+ * sharing a basename fall back to their full path, so records are never merged
+ * across different files.
+ */
+function fileGroupLabels(handles: ImportFileHandle[]): Map<ImportFileHandle, string> {
+  const distinct = [...new Set(handles)];
+  const baseCount = new Map<string, number>();
+  for (const h of distinct) baseCount.set(fileLabel(h), (baseCount.get(fileLabel(h)) ?? 0) + 1);
+  const labels = new Map<ImportFileHandle, string>();
+  for (const h of distinct) {
+    const base = fileLabel(h);
+    labels.set(h, (baseCount.get(base) ?? 0) > 1 ? getFilePathFromHandle(h) : base);
+  }
+  return labels;
+}
+
 function tracesWithFields(data: BlockData, pattern: PathPattern | undefined): TraceWithFields[] {
   const tagNames = pattern?.tags ?? [];
   // Combined file: one trace per record, identity matched from the record header
@@ -424,10 +442,11 @@ function tracesWithFields(data: BlockData, pattern: PathPattern | undefined): Tr
     // With no plate token the records group by their source file, so the QC
     // summary has one row per file rather than one "No plate" row.
     const groupByFile = !pattern?.hasPlate;
+    const fileLabels = fileGroupLabels((data.fastaHeaders ?? []).map((rec) => rec.file));
     return (data.fastaHeaders ?? []).map((rec) => {
       const m = pattern?.match(rec.header);
       const fields = m ? fieldsFromMatch(m, tagNames) : undefined;
-      if (fields && groupByFile) fields.plate = fileLabel(rec.file);
+      if (fields && groupByFile) fields.plate = fileLabels.get(rec.file) ?? fileLabel(rec.file);
       return {
         handle: rec.file,
         // The file, shared by all its records; the record's identity is in fields.

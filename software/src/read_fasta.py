@@ -37,6 +37,17 @@ def read_file_text(path):
     return data.decode("utf-8", "replace")
 
 
+def open_text(path):
+    """A line stream over a staged file, decompressing a gzip member on the fly.
+
+    Used where only the headers are needed, so a large combined file is never held
+    in memory whole: a gzipped file expands to many times its upload size."""
+    with open(path, "rb") as probe:
+        gzipped = probe.read(2) == b"\x1f\x8b"
+    opener = gzip.open if gzipped else open
+    return opener(path, "rt", encoding="utf-8", errors="replace")
+
+
 def read_records(path):
     """Every record's bases from a FASTA file, in file order, upper-cased and
     with whitespace removed. One file holds one record for a per-file set and
@@ -130,6 +141,15 @@ def build(plan, manifest, files, combined=False, amino_acid=False, fastq=False, 
         file_id = entry.get("forward") or entry.get("reverse")
         # A per-file set reads record 0; a combined file reads by the record index.
         record_index = entry.get("recordIndex", 0)
+        # A combined file holds many records, so each record's read is keyed by file
+        # and record index; a per-file set keys by the file path. Built before the
+        # set-aside branch so a rejected record carries the same key its Files-table
+        # row looks up.
+        path = plate = read_path = None
+        if file_id is not None and file_id in manifest:
+            path = manifest[file_id]["path"]
+            plate = manifest[file_id]["plate"]
+            read_path = ("%s#%d" % (path, record_index)) if combined else path
         record = None
         if file_id is not None:
             if file_id not in cache:
@@ -161,20 +181,12 @@ def build(plan, manifest, files, combined=False, amino_acid=False, fastq=False, 
                 sequence_extra = {"length": len(bases), "qualityScale": "none"}
 
         if bases is None:
-            if file_id is not None and file_id in manifest:
-                set_aside.append({"path": manifest[file_id]["path"],
-                                  "plate": manifest[file_id]["plate"],
-                                  "reason": reason})
+            if read_path is not None:
+                set_aside.append({"path": read_path, "plate": plate, "reason": reason})
             sequences.append(dict(base, source="none", reads=[],
                                   reason="No sequence"))
             continue
 
-        path = manifest[file_id]["path"]
-        plate = manifest[file_id]["plate"]
-        # A combined file holds many records, so each read is keyed by file and
-        # record index; a per-file set keys by the file path, as the Files table
-        # matches it.
-        read_path = ("%s#%d" % (path, record_index)) if combined else path
         sequences.append(dict(base, source="forward", reads=[read_path], **sequence_extra))
         # One read row per record so the Files table shows its length and status.
         reads.append(dict(read_row, id=file_id, path=read_path, plate=plate, kept=True))
@@ -203,17 +215,19 @@ def extract_headers(files_dir, count, fastq=False):
         path = files / ("f%05d" % i)
         headers = []
         if path.exists():
-            lines = read_file_text(path).splitlines()
-            if fastq:
-                for j in range(0, len(lines) - 3, 4):
-                    if lines[j].startswith("@"):
-                        body = lines[j][1:].strip()
-                        headers.append(body.split()[0] if body else "")
-            else:
-                for line in lines:
-                    if line.startswith(">"):
-                        body = line[1:].strip()
-                        headers.append(body.split()[0] if body else "")
+            with open_text(path) as handle:
+                if fastq:
+                    # A FASTQ header is every fourth line; a quality line may also
+                    # start with @, so the line number decides, not the first char.
+                    for j, line in enumerate(handle):
+                        if j % 4 == 0 and line.startswith("@"):
+                            body = line[1:].strip()
+                            headers.append(body.split()[0] if body else "")
+                else:
+                    for line in handle:
+                        if line.startswith(">"):
+                            body = line[1:].strip()
+                            headers.append(body.split()[0] if body else "")
         out.append(headers)
     pathlib.Path("headers.json").write_text(json.dumps(out))
     return 0

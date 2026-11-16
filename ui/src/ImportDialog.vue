@@ -114,11 +114,17 @@ watch([() => draft.form, () => draft.fileShape], () => {
 watch(
   [() => isCombined.value, () => draft.files, () => draft.form],
   () => {
-    if (isCombined.value && draft.files.length > 0) {
-      app.model.data.form = draft.form;
-      app.model.data.fileShape = "combined";
-      app.model.data.traceFiles = [...draft.files];
-    }
+    if (!isCombined.value) return;
+    app.model.data.form = draft.form;
+    app.model.data.fileShape = "combined";
+    const current = app.model.data.traceFiles ?? [];
+    const changed =
+      current.length !== draft.files.length || draft.files.some((f, i) => f !== current[i]);
+    app.model.data.traceFiles = [...draft.files];
+    // The headers belong to the previous selection. Dropping them makes Import
+    // wait for prerun to read the current files, so a removed file cannot be
+    // imported and an emptied selection disables Import.
+    if (changed) app.model.data.fastaHeaders = [];
   },
   { immediate: true, deep: true },
 );

@@ -124,9 +124,10 @@ const rowData = computed<FileRow[]>(() =>
     const filePath = getFilePathFromHandle(f.handle);
     const readKey = isCombined.value ? `${filePath}#${f.recordIndex ?? 0}` : f.relativePath;
     return {
-      // The record header is unique per combined row, so it is the row key; the
-      // Path column shows the file alone.
-      key: isCombined.value ? f.relativePath : f.path,
+      // The row key must be unique: a header can repeat across combined files, so
+      // the file-and-index key is used, not the header. A per-file row keys on its
+      // own path. The Path column shows the file alone.
+      key: isCombined.value ? readKey : f.path,
       path: isCombined.value ? basename(filePath) : f.relativePath,
       plate,
       well,

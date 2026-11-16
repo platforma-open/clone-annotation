@@ -214,6 +214,13 @@ describe("tokens inside an optional section", () => {
     expect(() => PathPattern.parse("{{Plate}}[_{{Well}}].ab1")).toThrow(/every file needs a well/);
     expect(() => PathPattern.parse("{{Well}}[_{{Chain}}|_x].ab1")).toThrow(/alternatives/);
   });
+
+  test("a name only inside [ ] cannot be the identity", () => {
+    // Records that miss the optional part would have no identity and merge into one
+    // clone. A name outside [ ] is fine.
+    expect(() => PathPattern.parse("{{:Run}}[_{{Name}}]")).toThrow(/outside \[ \]|identify/i);
+    expect(() => PathPattern.parse("{{Name}}[_{{Chain}}]")).not.toThrow();
+  });
 });
 
 describe("a field read in two places", () => {

@@ -194,6 +194,25 @@ def test_a_combined_fastq_writes_distinct_read_keys():
         os.chdir(cwd)
 
 
+def test_a_rejected_combined_record_keeps_its_record_path():
+    # A low-quality record in a combined file must be set aside under its own
+    # file#index key, the one its Files-table row looks up, not the bare file path.
+    tmp = pathlib.Path(tempfile.mkdtemp())
+    files = tmp / "fasta"
+    files.mkdir()
+    hi, lo = "I" * len(HEAVY), "!" * len(HEAVY)
+    (files / "f0").write_text("@recA\n%s\n+\n%s\n@recB\n%s\n+\n%s\n" % (HEAVY, hi, HEAVY, lo))
+    manifest = {"f0": {"path": "combined.fastq", "plate": ""}}
+    plan = [
+        {"well": "A1", "chain": "", "pairKey": "A1", "forward": "f0", "recordIndex": 0, "extra": 0},
+        {"well": "A2", "chain": "", "pairKey": "A2", "forward": "f0", "recordIndex": 1, "extra": 0}]
+    sequences, set_aside, reads, nt, frames = reader.build(
+        plan, manifest, files, combined=True, fastq=True, floor=20)
+    check("the good record is kept", len(reads), 1)
+    check("the bad record is set aside", len(set_aside), 1)
+    check("set aside keyed by file#index", set_aside[0]["path"], "combined.fastq#1")
+
+
 def test_a_gzipped_fastq_is_read_transparently():
     import gzip
     tmp = pathlib.Path(tempfile.mkdtemp())
