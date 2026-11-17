@@ -165,6 +165,9 @@ def test_a_fastq_read_below_the_floor_is_set_aside():
     check("set aside with a reason", len(set_aside), 1)
     check("the sequence is kept as a result", sequences[0]["source"], "none")
     check("no nucleotide for it", nt, [])
+    check("the sequence carries the real reason, not a generic one",
+          sequences[0]["reason"], set_aside[0]["reason"])
+    check("the reason names the trimming", sequences[0]["reason"].startswith("Trimming"), True)
 
 
 def test_a_combined_fastq_writes_distinct_read_keys():

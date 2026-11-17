@@ -162,13 +162,13 @@ const wellLabel = computed(() => (identityIsName.value ? "Sequence ID" : "Well")
 
 const columnDefs = computed<ColDef<FileRow>[]>(() => [
   makeRowNumberColDef(),
-  { headerName: "Path", field: "path", flex: 2 },
+  { headerName: "Path", field: "path", flex: 2, minWidth: 160 },
   ...(hasValue("plate") && !identityIsName.value
-    ? [{ headerName: "Plate", field: "plate", flex: 1 } satisfies ColDef<FileRow>]
+    ? [{ headerName: "Plate", field: "plate", flex: 1, minWidth: 100 } satisfies ColDef<FileRow>]
     : []),
-  { headerName: wellLabel.value, field: "well", flex: 1 },
+  { headerName: wellLabel.value, field: "well", flex: 1, minWidth: 120 },
   ...(hasValue("chain")
-    ? [{ headerName: "Chain", field: "chain", flex: 1 } satisfies ColDef<FileRow>]
+    ? [{ headerName: "Chain", field: "chain", flex: 1, minWidth: 90 } satisfies ColDef<FileRow>]
     : []),
   ...(hasValue("direction")
     ? [{ headerName: "Direction", field: "direction", width: 110 } satisfies ColDef<FileRow>]
@@ -176,13 +176,19 @@ const columnDefs = computed<ColDef<FileRow>[]>(() => [
   ...tagNames.value.map((name): ColDef<FileRow> => ({
     headerName: name,
     flex: 1,
+    minWidth: 120,
     valueGetter: (row) => row.data?.tags[name],
   })),
   ...properties.value.map((p): ColDef<FileRow> => {
     const numeric = p.type !== "String";
     return {
       headerName: p.name,
+      // A sheet can carry many columns with long names. A width floor keeps each
+      // header readable and lets the grid scroll sideways instead of shrinking
+      // every column to a letter; the full name shows on hover.
       flex: 1,
+      minWidth: 140,
+      headerTooltip: p.name,
       type: numeric ? "numericColumn" : undefined,
       // A well the sheet did not reach stays blank. Showing 0 would read as a
       // measurement that came out at zero.
@@ -242,6 +248,8 @@ const columnDefs = computed<ColDef<FileRow>[]>(() => [
     headerName: "Data",
     field: "file",
     flex: 2,
+    minWidth: 160,
+    cellClass: "files-data-cell",
     cellStyle: { padding: 0 },
     headerComponent: PlAgColumnHeader,
     headerComponentParams: { type: "File" } satisfies PlAgHeaderComponentParams,
@@ -315,5 +323,16 @@ const gridOptions: GridOptions<FileRow> = {
 <style>
 .row-unmatched {
   opacity: 0.45;
+}
+
+/* The Data cell only previews the imported file. The file input under it is made
+   pointer-transparent, so a click falls through to the row (select, context-menu
+   Remove) instead of opening a file dialog; its clear (✕) is also hidden. */
+.files-data-cell [data-testid="pl-file-input-control"] {
+  pointer-events: none;
+}
+
+.files-data-cell [data-testid="pl-file-input-clear"] {
+  display: none;
 }
 </style>

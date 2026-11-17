@@ -55,6 +55,8 @@ export const sdkPlugin = defineAppV3(platforma, (app) => {
   const progresses = computed(() => app.model.outputs.traceImports ?? {});
 
   return {
+    // The green running bar at the top of the block page.
+    progress: () => app.model.outputs.isRunning,
     routes: {
       "/": () => MainPage,
       "/results": () => ResultsPage,

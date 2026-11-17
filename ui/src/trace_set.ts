@@ -16,6 +16,10 @@ export const TRACE_EXTENSIONS = ["ab1", "abi", "ab", "scf"];
 /** Nucleotide FASTA, under the names it arrives with. */
 export const FASTA_NT_EXTENSIONS = ["fasta", "fa", "fna", "fas"];
 
+/** Amino-acid FASTA. `.faa` names a protein, so a selection of them guesses the
+ * amino-acid form directly. `.fasta` is shared with nucleotide and does not. */
+export const FASTA_AA_EXTENSIONS = ["faa"];
+
 /** FASTQ, under the names it arrives with. */
 export const FASTQ_EXTENSIONS = ["fastq", "fq"];
 
@@ -25,6 +29,7 @@ export const FASTQ_EXTENSIONS = ["fastq", "fq"];
 export const ALL_EXTENSIONS = [
   ...TRACE_EXTENSIONS,
   ...FASTA_NT_EXTENSIONS,
+  ...FASTA_AA_EXTENSIONS,
   ...FASTQ_EXTENSIONS,
   "gz",
 ];
@@ -41,6 +46,7 @@ export function isMultiRecordForm(form: InputForm): boolean {
  * the two share an extension. */
 export function guessForm(handles: ImportFileHandle[]): InputForm {
   let fasta = 0;
+  let aa = 0;
   let fastq = 0;
   let trace = 0;
   for (const handle of handles) {
@@ -50,9 +56,11 @@ export function guessForm(handles: ImportFileHandle[]): InputForm {
     if (name.endsWith(".gz")) name = name.slice(0, -3);
     const ext = name.split(".").pop() ?? "";
     if (FASTQ_EXTENSIONS.includes(ext)) fastq++;
+    else if (FASTA_AA_EXTENSIONS.includes(ext)) aa++;
     else if (FASTA_NT_EXTENSIONS.includes(ext)) fasta++;
     else if (TRACE_EXTENSIONS.includes(ext)) trace++;
   }
+  if (aa > fasta && aa > fastq && aa > trace) return "fastaAa";
   if (fastq > fasta && fastq > trace) return "fastqNt";
   return fasta > trace ? "fastaNt" : "trace";
 }

@@ -466,12 +466,13 @@ function tracesWithFields(data: BlockData, pattern: PathPattern | undefined): Tr
 }
 
 /**
- * The identity fields that make the clone key, in order. Every form keys on plate
- * and well: a header name rides the well slot (option A, see `fieldsFromMatch`).
- * Changing this to key a header set on its own `name` field is option B, later.
+ * The identity fields that make the clone key, in order. A header name rides the
+ * well slot (option A, see `fieldsFromMatch`). The plate joins the key only when
+ * the files carry a real plate, so the key matches `propertyKey`: a set with no
+ * plate (a name set, or a plateless well set) keys on the id alone.
  */
-function identityFields(): string[] {
-  return ["plate", "well"];
+function identityFields(pattern: PathPattern | undefined): string[] {
+  return pattern?.hasPlate ? ["plate", "well"] : ["well"];
 }
 
 function declaredFields(pattern: PathPattern | undefined) {
@@ -603,9 +604,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   .args((data) => {
     const pattern = parsePattern(data.namePattern);
     const traces = tracesWithFields(data, pattern);
-    // The fields that identify a clone, in order. Plate and well; a header name
-    // rides the well slot (option A).
-    const identity = identityFields();
+    const identity = identityFields(pattern);
     return {
       name: data.name,
       form: data.form ?? "trace",
@@ -845,6 +844,9 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   // machine that uploaded them.
   .templateParams((data) => ({
     form: data.form,
+    // Combined or per-file: without it a combined set returns as per-file, matching
+    // the header pattern against file paths.
+    fileShape: data.fileShape,
     namePattern: data.namePattern,
     qualityThreshold: data.qualityThreshold,
     numberingScheme: data.numberingScheme,
@@ -867,8 +869,10 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       { type: "link", href: "/qc", label: nameId ? "Sequence QC" : "Plate View" },
     ];
     // Read Quality charts Phred per read. A trace and a FASTQ carry it; both FASTA
-    // forms are letters only.
-    if (ctx.data.form === "trace" || ctx.data.form === "fastqNt") {
+    // forms are letters only. An absent form reads as trace, the same fallback the
+    // workflow uses, so the page does not vanish while the block runs as a trace set.
+    const form = ctx.data.form ?? "trace";
+    if (form === "trace" || form === "fastqNt") {
       sections.push({ type: "link", href: "/read-quality", label: "Read Quality" });
     }
     sections.push({ type: "link", href: "/results", label: "Results" });

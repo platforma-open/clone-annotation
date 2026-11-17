@@ -245,6 +245,24 @@ TestAttachMatchesOnADeclaredIdentity := func() {
 	test.isEqual(0, len(out.clonesWithout))
 }
 
+// A name set as production builds it: the name rides the well slot (option A), and
+// the file label sits in the plate slot. With no real plate the identity is the
+// well alone, so the key is the bare name. The property map drops the plate too,
+// so they match. Keying on plate and well would miss every clone.
+nameInWell := func(id, name, chain) {
+	return { id: id, path: name, fields: { plate: "lib.fasta", well: name, chain: chain, direction: "" } }
+}
+
+TestNameSetKeysOnTheBareNameNotTheFileLabel := func() {
+	cs := clones.group([nameInWell("t0", "AB7-02", "IGH")], ["well"])
+	test.isEqual("AB7-02", cs[0].key)
+	vals := {}
+	vals["AB7-02"] = "0.75"
+	out := clones.attach(cs, elisa(vals))
+	test.isEqual("0.75", out.clones[0].properties["elisa"])
+	test.isEqual(0, len(out.clonesWithout))
+}
+
 
 
 

@@ -157,10 +157,13 @@ const canImport = computed(
 );
 
 function addFiles(handles: ImportFileHandle[]) {
+  const wasEmpty = draft.files.length === 0;
   const seen = new Set(draft.files);
   draft.files = [...draft.files, ...handles.filter((h) => !seen.has(h))];
-  // The selection decides the input type; the dropdown stays, to correct it.
-  draft.form = guessForm(draft.files);
+  // The first selection guesses the input type; a later addition keeps the form
+  // the scientist set, so adding a file to an amino-acid set does not revert it
+  // to nucleotide (guessForm cannot tell protein from DNA). The dropdown corrects it.
+  if (wasEmpty) draft.form = guessForm(draft.files);
   draft.formOpen = true;
 }
 

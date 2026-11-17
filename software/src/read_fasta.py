@@ -184,7 +184,7 @@ def build(plan, manifest, files, combined=False, amino_acid=False, fastq=False, 
             if read_path is not None:
                 set_aside.append({"path": read_path, "plate": plate, "reason": reason})
             sequences.append(dict(base, source="none", reads=[],
-                                  reason="No sequence"))
+                                  reason=reason))
             continue
 
         sequences.append(dict(base, source="forward", reads=[read_path], **sequence_extra))
