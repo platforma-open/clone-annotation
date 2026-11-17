@@ -903,8 +903,6 @@ def write_sequences(path, annotations, sequences, properties):
             sequence = by_id.get(entry["id"], {})
             amino = entry.get("aa", {})
             bases = entry.get("nt", {})
-            # The sheet measures a well, so both chains of one well carry it.
-            well_key = entry["plate"] + "\u0000" + entry["well"]
             writer.writerow(
                 [sequence_key(entry), entry["plate"], entry["well"], detected_chain(entry),
                  entry["declaredChain"], sequence_reason(entry, sequence),
@@ -927,7 +925,8 @@ def write_sequences(path, annotations, sequences, properties):
                 + [entry.get(c, "") for c in MIXCR_EXTRA_COLUMNS]
                 + [amino.get(f, "") for f in FEATURES]
                 + [bases.get(f, "") for f in FEATURES]
-                + [p["values"].get(well_key, "") for p in properties]
+                # The sheet measures a well, so both chains of one well carry it.
+                + [property_value(p["values"], entry["plate"], entry["well"]) or "" for p in properties]
             )
 
 
@@ -1090,11 +1089,48 @@ def summarise(values):
     }
 
 
+def primary_value(values, ptype):
+    """The one representative value per property, of its own type.
+
+    A number is reduced to the mean of its wells, which equals the value when
+    there is a single well. A label shows the agreed value, or the distinct
+    values joined when the wells differ.
+    """
+    if not values:
+        return ""
+    if ptype in ("Long", "Double"):
+        summary = summarise(values)
+        return summary["mean"] if summary else ""
+    distinct = []
+    for v in values:
+        if v not in distinct:
+            distinct.append(v)
+    return " / ".join(distinct)
+
+
+def property_value(values, plate, well):
+    """A clone's value for a property, by any key the UI may have written.
+
+    The UI (`propertyKey` in the model) keys on plate and well together only when
+    the files carry a real plate, and on the within-file id alone otherwise. So
+    both forms are tried. This is safe because a bare-id key exists only when
+    there is no real plate: in that case there is one plate (or synthesised file
+    labels, which the plate-and-well form never matches), so the id-alone form
+    cannot pull one plate's value onto another plate's clone.
+    """
+    v = values.get(plate + "\u0000" + well)
+    if v is None:
+        v = values.get(well)
+    return v
+
+
 def clone_columns(properties):
     cols = ["cloneId", "wells", "wellCount", "pairStatus", "qcVerdict", "qcReason"] + pair_columns()
-    for i in range(len(properties)):
-        cols += ["prop_%d_values" % i, "prop_%d_disagrees" % i]
-        cols += ["prop_%d_%s" % (i, s) for s in ("min", "median", "max", "mean")]
+    for i, prop in enumerate(properties):
+        cols += ["prop_%d_value" % i, "prop_%d_values" % i, "prop_%d_disagrees" % i]
+        # Only a number is summarised, matching the column specs; a label gets none.
+        if prop.get("type") in ("Long", "Double"):
+            cols += ["prop_%d_%s" % (i, s) for s in ("min", "median", "max", "mean")]
     return cols
 
 
@@ -1273,7 +1309,7 @@ def write_clones(path, annotations, sequences, properties, counts=None, accepted
                 # its absence rather than shifting the others.
                 seen = []
                 for m in members:
-                    v = prop["values"].get(m["plate"] + "\u0000" + m["well"])
+                    v = property_value(prop["values"], m["plate"], m["well"])
                     if v is not None and v != "":
                         seen.append((well_name(m, name_identity), v))
                 values = [v for _, v in seen]
@@ -1282,8 +1318,10 @@ def write_clones(path, annotations, sequences, properties, counts=None, accepted
                 # carries no mark.
                 disagrees = "yes" if len(set(values)) > 1 else ""
                 summary = summarise(values)
-                row += [", ".join("%s: %s" % pair for pair in seen), disagrees]
-                row += [summary[s] if summary else "" for s in ("min", "median", "max", "mean")]
+                value = primary_value(values, prop.get("type"))
+                row += [value, ", ".join("%s: %s" % pair for pair in seen), disagrees]
+                if prop.get("type") in ("Long", "Double"):
+                    row += [summary[s] if summary else "" for s in ("min", "median", "max", "mean")]
             writer.writerow(row)
 
 
@@ -1543,8 +1581,8 @@ def write_wells(path, verdicts, annotations, sequences, properties):
                         sequence = by_id.get(entry["id"], {}) if entry else {}
                         cells += [sequence.get("meanQuality", ""), sequence.get("length", ""),
                                   (entry or {}).get("mixedPositions", "")]
-                    key = plate + "\u0000" + (well or "")
-                    cells += [p["values"].get(key, "") if well else "" for p in properties]
+                    cells += [(property_value(p["values"], plate, well or "") or "") if well else ""
+                              for p in properties]
                     writer.writerow(cells)
 
 

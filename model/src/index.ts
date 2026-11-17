@@ -33,7 +33,7 @@ export type {
   PropertyType,
 } from "@platforma-open/milaboratories.clone-annotation.kind";
 import type { PathPatternMatch } from "./path_pattern";
-import { normalizeWell, PathPattern, readEnd } from "./path_pattern";
+import { normalizeWell, PathPattern, propertyKey, readEnd } from "./path_pattern";
 
 /** One well of one plate, with how many files back each chain. */
 export type Clone = {
@@ -484,36 +484,26 @@ function declaredFields(pattern: PathPattern | undefined) {
   );
 }
 
-/** The clone key the identity fields make, matching the workflow's `cloneKey`. */
-function keyFromFields(fields: ReturnType<typeof fieldsFromMatch>, identity: string[]): string {
-  const lookup: Record<string, string> = {
-    plate: fields.plate,
-    well: fields.well,
-    name: fields.name,
-    chain: fields.chain,
-    direction: fields.direction,
-  };
-  return identity.map((f) => lookup[f] ?? "").join("\u0000");
-}
-
 /**
  * Each pattern tag as a property: the value the file name carried, keyed on the
- * same plate-and-well key the sheet uses. Carried as annotation only; it does not
- * identify the clone (that is the identity picker's job, later). Kept apart from
- * the sheet properties so the sheet-join QC still reflects the sheet alone.
+ * same key the sheet uses. Carried as annotation only; it does not identify the
+ * clone (that is the identity picker's job, later). Kept apart from the sheet
+ * properties so the sheet-join QC still reflects the sheet alone.
  */
 function tagProperties(
   traces: ReturnType<typeof tracesWithFields>,
   pattern: PathPattern | undefined,
-  identity: string[],
 ): Property[] {
   const names = pattern?.tags ?? [];
+  // The same key the sheet and the Files-table preview use, via one definition.
+  const identityIsName = pattern?.identityIsName ?? false;
+  const plateInKey = pattern?.hasPlate ?? false;
   return names.map((name) => {
     const values: Record<string, string> = {};
     for (const t of traces) {
       const v = t.fields ? t.fields.tags[name] : undefined;
       if (v === undefined || v === "" || !t.fields) continue;
-      values[keyFromFields(t.fields, identity)] = v;
+      values[propertyKey(t.fields.plate, t.fields.well, identityIsName, plateInKey)] = v;
     }
     return { name, type: "String", values };
   });
@@ -627,7 +617,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       traces,
       properties: data.properties,
       // Tags from the name pattern, carried as annotation beside the sheet's.
-      tagProperties: tagProperties(traces, pattern, identity),
+      tagProperties: tagProperties(traces, pattern),
       namePattern: data.namePattern,
       declaredFields: declaredFields(pattern),
       qualityThreshold: data.qualityThreshold,

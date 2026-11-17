@@ -27,10 +27,11 @@ SHOWN := {
 	light_chain: true, light_vGene: true, light_cGene: true, light_aa_CDR3: true
 }
 
-// A number can be summarised four ways and nothing in the data says which one
-// fits. All four are carried, and the scientist turns on the one that fits.
-SUMMARIES := ["min", "median", "max", "mean"]
-SUMMARY_LABEL := { min: "Min", median: "Median", max: "Max", mean: "Mean" }
+// A number is reduced to the mean of its wells for the default column. The
+// other summaries stay available as optional columns, so the scientist can
+// swap to one that fits (R14).
+SUMMARIES := ["min", "median", "max"]
+SUMMARY_LABEL := { min: "Min", median: "Median", max: "Max" }
 
 // The key is a hash. The Clone Id column is what a reader goes by.
 axisSpec := {
@@ -133,15 +134,22 @@ settings := func(properties, sides, ...opts) {
 	if !is_undefined(properties) {
 		for i, p in properties {
 			base := "prop_" + string(i)
-			// Every well's value, kept as it stands, beside the summary. R13
-			// asks for both, so neither has to be reconstructed from the other.
+			numeric := p.type != "String"
+			// The one column shown by default: a single typed value per property.
+			// A number is the mean of its wells; a label is the agreed value.
 			columns = append(columns,
-				col(base + "_values", "String", p.name + perWell, true))
+				col(base + "_value", numeric ? "Double" : "String", p.name, true))
+			// Off by default, but carried so nothing is lost (R13): the wells' own
+			// values, whether they disagree (R15), and the other summaries (R14).
 			columns = append(columns,
-				col(base + "_disagrees", "String", p.name + " Disagrees", true))
-			for s in SUMMARIES {
-				columns = append(columns,
-					col(base + "_" + s, "Double", p.name + " " + SUMMARY_LABEL[s], false))
+				col(base + "_values", "String", p.name + perWell, false))
+			columns = append(columns,
+				col(base + "_disagrees", "String", p.name + " Disagrees", false))
+			if numeric {
+				for s in SUMMARIES {
+					columns = append(columns,
+						col(base + "_" + s, "Double", p.name + " " + SUMMARY_LABEL[s], false))
+				}
 			}
 		}
 	}

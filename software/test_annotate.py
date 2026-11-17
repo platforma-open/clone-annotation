@@ -1074,6 +1074,7 @@ def test_wells_that_disagree_on_a_reading_are_marked():
             "values": {"Plate1\u0000A1": "2.5", "Plate1\u0000B2": "0.1"}}
     table = clones_of(rows, [prop])
     row = table[0]
+    check("value is the mean", row["prop_0_value"], "1.3")
     check("both values kept", row["prop_0_values"], "Plate1 A1: 2.5, Plate1 B2: 0.1")
     check("disagreement marked", row["prop_0_disagrees"], "yes")
     check("max", row["prop_0_max"], "2.5")
@@ -1087,6 +1088,7 @@ def test_wells_that_agree_carry_no_mark():
     prop = {"name": "elisa", "type": "Double",
             "values": {"Plate1\u0000A1": "2.5", "Plate1\u0000B2": "2.5"}}
     row = clones_of(rows, [prop])[0]
+    check("value is the agreed reading", row["prop_0_value"], "2.5")
     check("no mark", row["prop_0_disagrees"], "")
     check("still summarised", row["prop_0_max"], "2.5")
 
@@ -1097,9 +1099,36 @@ def test_a_label_gets_no_arithmetic():
     prop = {"name": "note", "type": "String",
             "values": {"Plate1\u0000A1": "hit", "Plate1\u0000B2": "weak"}}
     row = clones_of(rows, [prop])[0]
+    check("value joins the distinct labels", row["prop_0_value"], "hit / weak")
     check("values kept as they stand", row["prop_0_values"], "Plate1 A1: hit, Plate1 B2: weak")
     check("disagreement marked", row["prop_0_disagrees"], "yes")
-    check("no summary invented", row["prop_0_max"], "")
+    check("a label gets no summary columns", "prop_0_max" in row, False)
+
+
+def test_properties_join_whichever_key_the_sheet_used():
+    # The lookup tries plate+well, then the id alone, so it finds a value whichever
+    # form the sheet wrote.
+    import csv as _csv
+    from annotate import pair_up, write_clones
+
+    def value_of(rows, prop):
+        work = tempfile.mkdtemp()
+        pair_up(rows, True)
+        out = os.path.join(work, "clones.tsv")
+        write_clones(out, rows, [{"id": r["id"]} for r in rows], [prop])
+        return list(_csv.DictReader(open(out), delimiter="\t"))[0]["prop_0_value"]
+
+    # A combined set stamps the source file as the "plate"; the sheet keys on the
+    # id alone. The join must ignore the file.
+    combined = [sequence_nt("m0", "cloneX", "IGH", "H", "ACGTACGT")]
+    combined[0]["plate"] = "combined.fasta"
+    check("id-only sheet joins past the file label",
+          value_of(combined, {"name": "e", "type": "Double", "values": {"cloneX": "2.5"}}), "2.5")
+
+    # A real plate/well set: the sheet keys on plate and well together.
+    pw = [sequence_nt("m0", "A1", "IGH", "H", "ACGTACGT")]  # sequence_nt sets plate Plate1
+    check("plate-and-well sheet still joins",
+          value_of(pw, {"name": "e", "type": "Double", "values": {"Plate1\u0000A1": "3.5"}}), "3.5")
 
 
 def test_abundance_counts_wells_per_plate():
@@ -1367,6 +1396,7 @@ def test_a_well_with_two_identical_candidates_counts_once():
     write_clones(os.path.join(work, "clones.tsv"), rows, [{"id": r["id"]} for r in rows], [prop])
     clone = list(_csv.DictReader(open(os.path.join(work, "clones.tsv")), delimiter="\t"))[0]
     check("each well once", (clone["wells"], clone["wellCount"]), ("Plate1 A1, Plate1 B1", "2"))
+    check("value is the measured well", clone["prop_0_value"], "120.0")
     check("B1 was not measured and shows so", clone["prop_0_values"], "Plate1 A1: 120")
     write_abundance(os.path.join(work, "abundance.tsv"), rows)
     ab = list(_csv.DictReader(open(os.path.join(work, "abundance.tsv")), delimiter="\t"))

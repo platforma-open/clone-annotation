@@ -523,8 +523,8 @@ abundanceColumn := func(...opts) {
 	}
 }
 
-// Each sheet column travels as the summaries of the wells behind the variant,
-// plus the values as they stand and whether those wells disagreed.
+// Each property travels as one default value column, plus the per-well values,
+// the disagreement flag and the other summaries carried off by default.
 propertyColumns := func(properties) {
 	columns := []
 	if is_undefined(properties) {
@@ -533,6 +533,20 @@ propertyColumns := func(properties) {
 	for i, p in properties {
 		token := strings.substituteSpecialCharacters(p.name)
 		base := "prop_" + string(i)
+		numeric := p.type != "String"
+		// The primary: one value per property, shown by default. A number is the
+		// mean of its wells; a label is the agreed value. Everything else is
+		// carried too, but off by default, so one property is one column.
+		columns = append(columns, {
+			column: base + "_value",
+			allowNA: true,
+			spec: {
+				name: "pl7.app/vdj/importedProperty/" + token,
+				valueType: numeric ? "Double" : "String",
+				domain: { "pl7.app/vdj/importedProperty/summary": "value" },
+				annotations: a("43100", "default", { "pl7.app/label": p.name })
+			}
+		})
 		columns = append(columns, {
 			column: base + "_values",
 			allowNA: true,
@@ -540,7 +554,7 @@ propertyColumns := func(properties) {
 				name: "pl7.app/vdj/importedProperty/" + token,
 				valueType: "String",
 				domain: { "pl7.app/vdj/importedProperty/summary": "perWell" },
-				annotations: a("43000", "default",
+				annotations: a("43000", "optional",
 					{ "pl7.app/label": p.name + " (per Well)" })
 			}
 		})
@@ -557,7 +571,7 @@ propertyColumns := func(properties) {
 				})
 			}
 		})
-		if p.type != "String" {
+		if numeric {
 			for s in ["min", "median", "max", "mean"] {
 				columns = append(columns, {
 					column: base + "_" + s,
@@ -566,7 +580,7 @@ propertyColumns := func(properties) {
 						name: "pl7.app/vdj/importedProperty/" + token,
 						valueType: "Double",
 						domain: { "pl7.app/vdj/importedProperty/summary": s },
-						annotations: a("42800", s == "max" ? "default" : "optional",
+						annotations: a("42800", "optional",
 							{ "pl7.app/label": p.name + " " + SUMMARY_LABEL[s] })
 					}
 				})

@@ -20,14 +20,26 @@ import { useApp } from "./app";
 import {
   buildProperties,
   duplicateKeyCount,
+  guessIdentityColumn,
   guessPlateColumn,
   guessType,
   guessWellColumn,
 } from "./properties";
 import type { Sheet } from "./sheet";
 import { readSheet } from "./sheet";
+import { compilePattern } from "./trace_set";
 
 const app = useApp();
+
+// A name-keyed set (a FASTA header or a per-file id, no well) identifies a clone
+// by its record id, not a plate and well. The sheet then maps on that id column,
+// and there is no plate to map.
+const pattern = computed(() => compilePattern(app.model.data.namePattern ?? "").pattern);
+const identityIsName = computed(() => pattern.value?.identityIsName ?? false);
+const idLabel = computed(() => (identityIsName.value ? "Sequence ID" : "Well"));
+// A plate is mapped only when the files carry one. With no plate token the clone
+// is keyed on its within-file id alone, so a plate column would never match.
+const hasPlate = computed(() => pattern.value?.hasPlate ?? false);
 const reactiveFileContent = ReactiveFileContent.useGlobal();
 
 /** What one column of the sheet does: become a property of that type, or stay out. */
@@ -88,8 +100,10 @@ watch(
   sheet,
   (s) => {
     if (!s) return;
-    if (draft.wellColumn === "") draft.wellColumn = guessWellColumn(s) ?? "";
-    if (draft.plateColumn === "") draft.plateColumn = guessPlateColumn(s, draft.wellColumn) ?? "";
+    if (draft.wellColumn === "")
+      draft.wellColumn = (identityIsName.value ? guessIdentityColumn(s) : guessWellColumn(s)) ?? "";
+    if (hasPlate.value && draft.plateColumn === "")
+      draft.plateColumn = guessPlateColumn(s, draft.wellColumn) ?? "";
     const savedTypes = new Map(
       draft.fromSaved ? app.model.data.properties.map((p) => [p.name, p.type]) : [],
     );
@@ -115,7 +129,9 @@ const columnOptions = computed<ListOption<string>[]>(() =>
 
 /** Columns the scientist chooses an action for: everything but the identifiers. */
 const mappableColumns = computed(() =>
-  (sheet.value?.columns ?? []).filter((c) => c !== draft.wellColumn && c !== draft.plateColumn),
+  (sheet.value?.columns ?? []).filter(
+    (c) => c !== draft.wellColumn && (!hasPlate.value || c !== draft.plateColumn),
+  ),
 );
 
 const carried = computed(() => mappableColumns.value.filter((c) => draft.actions[c] !== IGNORE));
@@ -126,10 +142,12 @@ const duplicates = computed(() => {
   const s = sheet.value;
   if (!s || draft.wellColumn === "") return 0;
   return duplicateKeyCount(s, {
-    plateColumn: draft.plateColumn || undefined,
+    plateColumn: hasPlate.value ? draft.plateColumn || undefined : undefined,
     wellColumn: draft.wellColumn,
     propertyColumns: [],
     types: {},
+    identityIsName: identityIsName.value,
+    plateInKey: hasPlate.value,
   });
 });
 
@@ -146,7 +164,9 @@ const summary = computed(() => {
   let text = `Rows: ${s.rows.length}\n`;
   text += `Sheet columns: ${s.columns.length}`;
   text += ` (${carried.value.length} carried as properties, ${skipped} skipped)\n`;
-  text += `Plate: ${draft.plateColumn || "one plate for the whole sheet"}`;
+  text += hasPlate.value
+    ? `Plate: ${draft.plateColumn || "one plate for the whole sheet"}`
+    : `Keyed on: ${draft.wellColumn || idLabel.value.toLowerCase()}`;
   return text;
 });
 
@@ -170,10 +190,12 @@ function save() {
   const types: Record<string, PropertyType> = {};
   for (const c of carried.value) types[c] = draft.actions[c] as PropertyType;
   const mapping = {
-    plateColumn: draft.plateColumn || undefined,
+    plateColumn: hasPlate.value ? draft.plateColumn || undefined : undefined,
     wellColumn: draft.wellColumn,
     propertyColumns: carried.value,
     types,
+    identityIsName: identityIsName.value,
+    plateInKey: hasPlate.value,
   };
   app.model.data.propertyMapping = mapping;
   // The file is parsed once, here. What reaches the workflow is the mapped
@@ -193,12 +215,13 @@ function save() {
     <template v-else>
       <PlDropdown
         v-model="draft.wellColumn"
-        label="Well column"
-        placeholder="Which column holds the well"
+        :label="`${idLabel} column`"
+        :placeholder="`Which column holds the ${idLabel.toLowerCase()}`"
         :options="columnOptions"
       />
 
       <PlDropdown
+        v-if="hasPlate"
         v-model="draft.plateColumn"
         label="Plate column"
         placeholder="Leave empty if the sheet covers one plate"
@@ -215,11 +238,14 @@ function save() {
       />
 
       <PlAlert v-if="duplicates > 0" type="warn" icon>
-        {{ duplicates }} row(s) land on a well another row already claimed. The last one wins, so
-        the earlier readings are lost. Add a plate column if the sheet covers more than one plate.
+        {{ duplicates }} row(s) land on {{ identityIsName ? "an id" : "a well" }} another row
+        already claimed. The last one wins, so the earlier readings are lost.
+        <template v-if="hasPlate">
+          Add a plate column if the sheet covers more than one plate.
+        </template>
       </PlAlert>
       <PlAlert v-if="rowsWithoutWell > 0" type="warn" icon>
-        {{ rowsWithoutWell }} row(s) name no well and reach no clone.
+        {{ rowsWithoutWell }} row(s) name no {{ idLabel.toLowerCase() }} and reach no clone.
       </PlAlert>
 
       <PlLogView :value="summary" label="Import information" />

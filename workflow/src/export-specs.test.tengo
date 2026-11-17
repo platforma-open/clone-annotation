@@ -214,14 +214,15 @@ TestRegionsCarryTheScheme := func() {
 TestAPropertyBringsItsValuesAndItsSummaries := func() {
 	props := [{ name: "elisa", type: "Double", values: {} }]
 	s := exportSpecs.variantSettings("blk", props, "imgt", undefined)
-	// values, disagrees, and four summaries.
-	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + GERMLINE_COLUMNS + LENGTH_COLUMNS + FLANK_COLUMNS + ANNOTATION_COLUMNS + GERMLINE_SEQUENCE_COLUMNS + FIXED_COLUMNS + 6, len(s.columns))
+	// value, per-well values, disagrees, and four summaries.
+	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + GERMLINE_COLUMNS + LENGTH_COLUMNS + FLANK_COLUMNS + ANNOTATION_COLUMNS + GERMLINE_SEQUENCE_COLUMNS + FIXED_COLUMNS + 7, len(s.columns))
 }
 
 TestALabelGetsNoSummaries := func() {
 	props := [{ name: "note", type: "String", values: {} }]
 	s := exportSpecs.variantSettings("blk", props, "imgt", undefined)
-	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + GERMLINE_COLUMNS + LENGTH_COLUMNS + FLANK_COLUMNS + ANNOTATION_COLUMNS + GERMLINE_SEQUENCE_COLUMNS + FIXED_COLUMNS + 2, len(s.columns))
+	// value, per-well values, and disagrees. No numeric summaries for a label.
+	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + GERMLINE_COLUMNS + LENGTH_COLUMNS + FLANK_COLUMNS + ANNOTATION_COLUMNS + GERMLINE_SEQUENCE_COLUMNS + FIXED_COLUMNS + 3, len(s.columns))
 }
 
 TestAbundanceCarriesTheSampleAxisFirst := func() {

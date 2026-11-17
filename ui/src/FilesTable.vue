@@ -50,6 +50,12 @@ const isCombined = computed(() => (app.model.data.fileShape ?? "perFile") === "c
 /** The sheet's columns, in the order the scientist mapped them. */
 const properties = computed(() => app.model.data.properties ?? []);
 
+// The join key must be built the same way the properties were, in `buildProperties`:
+// a record id for a name-keyed set, and the plate only when the files carry one.
+const pattern = computed(() => compilePattern(app.model.data.namePattern ?? "").pattern);
+const identityIsName = computed(() => pattern.value?.identityIsName ?? false);
+const hasPlate = computed(() => pattern.value?.hasPlate ?? false);
+
 /** The tag names the pattern declared, over the selected files. */
 const tagNames = computed(() => {
   const names = new Set<string>();
@@ -112,7 +118,7 @@ const rowData = computed<FileRow[]>(() =>
     const well = f.match?.well?.value ?? f.match?.name?.value ?? "";
     const values: Record<string, string> = {};
     if (f.match) {
-      const key = cloneKey(plate, well);
+      const key = cloneKey(plate, well, identityIsName.value, hasPlate.value);
       for (const p of properties.value) {
         const v = p.values[key];
         if (v !== undefined) values[p.name] = v;
@@ -152,9 +158,6 @@ const hasValue = (field: "plate" | "chain" | "direction") =>
 // A name-keyed set (a header with a name and no well) labels its identity by the
 // record's header, the "Sequence ID". Its "plate" is the source file, which the
 // Data column already shows, so that column is dropped.
-const identityIsName = computed(
-  () => compilePattern(app.model.data.namePattern ?? "").pattern?.identityIsName ?? false,
-);
 const wellLabel = computed(() => (identityIsName.value ? "Sequence ID" : "Well"));
 
 const columnDefs = computed<ColDef<FileRow>[]>(() => [

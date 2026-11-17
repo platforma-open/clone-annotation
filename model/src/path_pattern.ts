@@ -135,6 +135,24 @@ export function normalizeWell(well: string): string {
   return m ? `${m[1]!.toUpperCase()}${m[2]}` : well.trim();
 }
 
+/**
+ * The one definition of the property-join key. The sheet import, the Files-table
+ * preview and the model's tag properties all build it through this function, and
+ * `property_value` in annotate.py mirrors it. The plate is in the key only when
+ * the files carry a real plate (`plateInKey`); otherwise the within-file id alone
+ * keys it, since a combined file's label is not part of the identity. A well is
+ * normalised so A1 and A01 are one; a record id is taken as it stands.
+ */
+export function propertyKey(
+  plate: string,
+  idValue: string,
+  identityIsName: boolean,
+  plateInKey: boolean,
+): string {
+  const id = identityIsName ? idValue : normalizeWell(idValue);
+  return plateInKey ? `${plate}\u0000${id}` : id;
+}
+
 const FORWARD = new Set(["f", "fwd", "forward", "1", "r1"]);
 const REVERSE = new Set(["r", "rev", "reverse", "2", "r2"]);
 
