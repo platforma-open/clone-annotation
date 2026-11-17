@@ -3,6 +3,10 @@ import type {
   ImportFileHandle,
   TraceRead,
 } from "@platforma-open/milaboratories.clone-annotation.model";
+import {
+  basename,
+  getFilePathFromHandle,
+} from "@platforma-open/milaboratories.clone-annotation.model";
 import type { PlAgHeaderComponentParams } from "@platforma-sdk/ui-vue";
 import {
   AgGridTheme,
@@ -17,7 +21,7 @@ import { computed, shallowRef } from "vue";
 import { useApp } from "./app";
 import { cloneKey } from "./properties";
 import type { SelectedFile } from "./trace_set";
-import { TRACE_EXTENSIONS } from "./trace_set";
+import { ALL_EXTENSIONS, compilePattern } from "./trace_set";
 
 const props = defineProps<{ files: SelectedFile[] }>();
 
@@ -35,12 +39,29 @@ type FileRow = {
   /** What Tracy made of this file. Absent until the block has run. */
   read?: TraceRead;
   setAsideReason?: string;
+  /** Pattern tags the file name carried, keyed by the tag's name. */
+  tags: Record<string, string>;
   /** What the sheet holds for this file's well, under the names it used. */
   properties: Record<string, string>;
 };
 
+const isCombined = computed(() => (app.model.data.fileShape ?? "perFile") === "combined");
+
 /** The sheet's columns, in the order the scientist mapped them. */
 const properties = computed(() => app.model.data.properties ?? []);
+
+// The join key must be built the same way the properties were, in `buildProperties`:
+// a record id for a name-keyed set, and the plate only when the files carry one.
+const pattern = computed(() => compilePattern(app.model.data.namePattern ?? "").pattern);
+const identityIsName = computed(() => pattern.value?.identityIsName ?? false);
+const hasPlate = computed(() => pattern.value?.hasPlate ?? false);
+
+/** The tag names the pattern declared, over the selected files. */
+const tagNames = computed(() => {
+  const names = new Set<string>();
+  for (const f of props.files) for (const n of Object.keys(f.match?.tags ?? {})) names.add(n);
+  return [...names];
+});
 
 /** Tracy's results, keyed by the same relative path the table shows. */
 const reads = computed(() => {
@@ -56,6 +77,14 @@ const setAside = computed(() => {
 });
 
 const hasReads = computed(() => (app.model.outputs.traceReport?.reads.length ?? 0) > 0);
+
+// Separate from hasReads: a FASTA gives a read per file (so Length and Status
+// show) but carries no quality, so the quality columns stay hidden.
+const hasQuality = computed(() =>
+  (app.model.outputs.traceReport?.reads ?? []).some(
+    (r) => r.meanQuality !== undefined && r.meanQuality !== null,
+  ),
+);
 
 /** The four tag colours PlAgCellStatusTag draws. */
 type StatusTag = "OK" | "WARN" | "ALERT" | "HOLD";
@@ -84,43 +113,82 @@ function readStatusLabel(row?: FileRow): string | undefined {
 const rowData = computed<FileRow[]>(() =>
   props.files.map((f) => {
     const plate = f.match?.plate?.value ?? "";
-    const well = f.match?.well.value ?? "";
+    // A header name with no well rides the well slot (option A), so it fills the
+    // Sequence ID column.
+    const well = f.match?.well?.value ?? f.match?.name?.value ?? "";
     const values: Record<string, string> = {};
     if (f.match) {
-      const key = cloneKey(plate, well);
+      const key = cloneKey(plate, well, identityIsName.value, hasPlate.value);
       for (const p of properties.value) {
         const v = p.values[key];
         if (v !== undefined) values[p.name] = v;
       }
     }
+    // For a combined file `f.path` is the record header, so the file itself comes
+    // off the handle. The reader keys each record's read as "<file>#<index>"; a
+    // per-file set keys on its path.
+    const filePath = getFilePathFromHandle(f.handle);
+    const readKey = isCombined.value ? `${filePath}#${f.recordIndex ?? 0}` : f.relativePath;
     return {
-      key: f.path,
-      path: f.relativePath,
+      // The row key must be unique: a header can repeat across combined files, so
+      // the file-and-index key is used, not the header. A per-file row keys on its
+      // own path. The Path column shows the file alone.
+      key: isCombined.value ? readKey : f.path,
+      path: isCombined.value ? basename(filePath) : f.relativePath,
       plate,
       well,
       chain: f.match?.chain?.value ?? "",
       direction: f.match?.direction?.value ?? "",
       matched: f.match !== undefined,
       file: f.handle,
+      tags: Object.fromEntries(Object.entries(f.match?.tags ?? {}).map(([k, m]) => [k, m.value])),
       properties: values,
-      read: reads.value.get(f.relativePath),
-      setAsideReason: setAside.value.get(f.relativePath),
+      read: reads.value.get(readKey),
+      setAsideReason: setAside.value.get(readKey),
     };
   }),
 );
 
+// An identity column is shown only when the pattern filled it. FASTA has no
+// direction, and a set with no chain or plate token leaves those empty, so the
+// column would be a blank strip.
+const hasValue = (field: "plate" | "chain" | "direction") =>
+  rowData.value.some((r) => r[field] !== "");
+
+// A name-keyed set (a header with a name and no well) labels its identity by the
+// record's header, the "Sequence ID". Its "plate" is the source file, which the
+// Data column already shows, so that column is dropped.
+const wellLabel = computed(() => (identityIsName.value ? "Sequence ID" : "Well"));
+
 const columnDefs = computed<ColDef<FileRow>[]>(() => [
   makeRowNumberColDef(),
-  { headerName: "Path", field: "path", flex: 2 },
-  { headerName: "Plate", field: "plate", flex: 1 },
-  { headerName: "Well", field: "well", flex: 1 },
-  { headerName: "Chain", field: "chain", flex: 1 },
-  { headerName: "Direction", field: "direction", width: 110 },
+  { headerName: "Path", field: "path", flex: 2, minWidth: 160 },
+  ...(hasValue("plate") && !identityIsName.value
+    ? [{ headerName: "Plate", field: "plate", flex: 1, minWidth: 100 } satisfies ColDef<FileRow>]
+    : []),
+  { headerName: wellLabel.value, field: "well", flex: 1, minWidth: 120 },
+  ...(hasValue("chain")
+    ? [{ headerName: "Chain", field: "chain", flex: 1, minWidth: 90 } satisfies ColDef<FileRow>]
+    : []),
+  ...(hasValue("direction")
+    ? [{ headerName: "Direction", field: "direction", width: 110 } satisfies ColDef<FileRow>]
+    : []),
+  ...tagNames.value.map((name): ColDef<FileRow> => ({
+    headerName: name,
+    flex: 1,
+    minWidth: 120,
+    valueGetter: (row) => row.data?.tags[name],
+  })),
   ...properties.value.map((p): ColDef<FileRow> => {
     const numeric = p.type !== "String";
     return {
       headerName: p.name,
+      // A sheet can carry many columns with long names. A width floor keeps each
+      // header readable and lets the grid scroll sideways instead of shrinking
+      // every column to a letter; the full name shows on hover.
       flex: 1,
+      minWidth: 140,
+      headerTooltip: p.name,
       type: numeric ? "numericColumn" : undefined,
       // A well the sheet did not reach stays blank. Showing 0 would read as a
       // measurement that came out at zero.
@@ -139,6 +207,10 @@ const columnDefs = computed<ColDef<FileRow>[]>(() => [
           type: "numericColumn",
           valueGetter: (row) => row.data?.read?.length,
         } satisfies ColDef<FileRow>,
+      ]
+    : []),
+  ...(hasQuality.value
+    ? [
         {
           headerName: "Trimmed Length",
           width: 130,
@@ -153,6 +225,10 @@ const columnDefs = computed<ColDef<FileRow>[]>(() => [
           headerTooltip: "Mean Phred quality of the trimmed read",
           valueGetter: (row) => row.data?.read?.meanQuality,
         } satisfies ColDef<FileRow>,
+      ]
+    : []),
+  ...(hasReads.value
+    ? [
         {
           headerName: "Status",
           width: 120,
@@ -172,12 +248,14 @@ const columnDefs = computed<ColDef<FileRow>[]>(() => [
     headerName: "Data",
     field: "file",
     flex: 2,
+    minWidth: 160,
+    cellClass: "files-data-cell",
     cellStyle: { padding: 0 },
     headerComponent: PlAgColumnHeader,
     headerComponentParams: { type: "File" } satisfies PlAgHeaderComponentParams,
     cellRenderer: "PlAgCellFile",
     cellRendererParams: {
-      extensions: TRACE_EXTENSIONS,
+      extensions: ALL_EXTENSIONS,
       resolveProgress: (handle: ImportFileHandle | undefined) =>
         handle ? app.progresses[handle] : undefined,
     },
@@ -245,5 +323,16 @@ const gridOptions: GridOptions<FileRow> = {
 <style>
 .row-unmatched {
   opacity: 0.45;
+}
+
+/* The Data cell only previews the imported file. The file input under it is made
+   pointer-transparent, so a click falls through to the row (select, context-menu
+   Remove) instead of opening a file dialog; its clear (✕) is also hidden. */
+.files-data-cell [data-testid="pl-file-input-control"] {
+  pointer-events: none;
+}
+
+.files-data-cell [data-testid="pl-file-input-clear"] {
+  display: none;
 }
 </style>

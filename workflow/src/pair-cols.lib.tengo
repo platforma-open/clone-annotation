@@ -71,10 +71,13 @@ col := func(column, valueType, label) {
 }
 
 // `sides` lists the sides the set has sequences for. Undefined means both.
-settings := func(sides) {
+settings := func(sides, ...opts) {
 	if is_undefined(sides) {
 		sides = SIDES
 	}
+	// An amino-acid set has no nucleotide and no MiXCR germline, so the gene and
+	// nt columns are left out.
+	aminoAcid := len(opts) > 0 ? opts[0] : false
 
 	columns := [
 		col("plate", "String", "Plate"),
@@ -83,9 +86,13 @@ settings := func(sides) {
 		col("qcReason", "String", "QC Reason")
 	]
 
+	isGene := { vGene: true, dGene: true, jGene: true }
 	for side in sides {
 		title := side == "heavy" ? "Heavy" : "Light"
 		for f in PER_SIDE {
+			if aminoAcid && isGene[f] == true {
+				continue
+			}
 			columns = append(columns,
 				col(side + "_" + f, TYPES[f], title + " " + LABELS[f]))
 		}
@@ -93,9 +100,11 @@ settings := func(sides) {
 			columns = append(columns,
 				col(side + "_aa_" + f, "String", title + " " + f + " aa"))
 		}
-		for f in FEATURES {
-			columns = append(columns,
-				col(side + "_nt_" + f, "String", title + " " + f + " nt"))
+		if !aminoAcid {
+			for f in FEATURES {
+				columns = append(columns,
+					col(side + "_nt_" + f, "String", title + " " + f + " nt"))
+			}
 		}
 	}
 

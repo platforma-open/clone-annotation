@@ -3,8 +3,9 @@
 Takes the sequencing files of individually picked clones, in whatever form they arrived, and returns
 annotated antibody sequences carrying their plate and well identity and a quality assessment. Built
 for low-throughput discovery — hybridoma supernatants, single sorted B cells, phage picks — where
-every clone is one well on a plate and every well is read on a capillary sequencer. Traces are
-accepted as ABIF (`.ab1`, `.abi`, `.ab`) or SCF.
+every clone is one well on a plate and every well is read on a capillary sequencer. Sequences are
+accepted as Sanger traces — ABIF (`.ab1`, `.abi`, `.ab`) or SCF — or as FASTA (nucleotide or amino
+acid) or FASTQ files, gzipped or plain.
 
 The usual route for this material is a folder of files and a spreadsheet, reconciled by hand. This
 block takes both and keeps the link between them, so a binding measurement stays attached to the

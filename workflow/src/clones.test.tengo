@@ -212,6 +212,57 @@ TestPairKeyOnPlateAndWellSeparatesWells := func() {
 	test.isTrue(out[0].pairKey != out[1].pairKey)
 }
 
+// A record whose fields carry a name, as a FASTA header gives. The identity list
+// is just the name; plate and well are empty.
+named := func(id, name, chain) {
+	return { id: id, path: name, fields: { name: name, chain: chain, direction: "", plate: "", well: "" } }
+}
+
+TestGroupKeysOnADeclaredIdentity := func() {
+	out := clones.group(
+		[named("t0", "VH1", ""), named("t1", "VH1", ""), named("t2", "VH2", "")],
+		["name"])
+	test.isEqual(2, len(out))
+	test.isEqual("VH1", out[0].key)
+	test.isEqual("VH2", out[1].key)
+}
+
+TestSequencesPairKeyOnADeclaredIdentity := func() {
+	out := clones.sequences(
+		[named("t0", "VH1", "IGH"), named("t1", "VH1", "IGL")],
+		["name"])
+	test.isEqual(2, len(out))
+	test.isEqual(out[0].pairKey, out[1].pairKey)
+	test.isEqual("VH1", out[0].pairKey)
+}
+
+TestAttachMatchesOnADeclaredIdentity := func() {
+	cs := clones.group([named("t0", "VH1", "")], ["name"])
+	vals := {}
+	vals["VH1"] = "9.9"
+	out := clones.attach(cs, elisa(vals))
+	test.isEqual("9.9", out.clones[0].properties["elisa"])
+	test.isEqual(0, len(out.clonesWithout))
+}
+
+// A name set as production builds it: the name rides the well slot (option A), and
+// the file label sits in the plate slot. With no real plate the identity is the
+// well alone, so the key is the bare name. The property map drops the plate too,
+// so they match. Keying on plate and well would miss every clone.
+nameInWell := func(id, name, chain) {
+	return { id: id, path: name, fields: { plate: "lib.fasta", well: name, chain: chain, direction: "" } }
+}
+
+TestNameSetKeysOnTheBareNameNotTheFileLabel := func() {
+	cs := clones.group([nameInWell("t0", "AB7-02", "IGH")], ["well"])
+	test.isEqual("AB7-02", cs[0].key)
+	vals := {}
+	vals["AB7-02"] = "0.75"
+	out := clones.attach(cs, elisa(vals))
+	test.isEqual("0.75", out.clones[0].properties["elisa"])
+	test.isEqual(0, len(out.clonesWithout))
+}
+
 
 
 

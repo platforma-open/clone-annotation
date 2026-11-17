@@ -53,6 +53,42 @@ TestVariantSettingsBuildEveryColumn := func() {
 	test.isEqual(GERMLINE_SEQUENCE_COLUMNS, countOf(s, "pl7.app/vdj/germlineSequence"))
 }
 
+// An amino-acid set: the aa sequence columns (two chains, eight features) and
+// the CDR3 aa length, with no MiXCR-derived columns at all.
+AA_SEQUENCE_COLUMNS := 16
+AA_LENGTH_COLUMNS := 2
+
+TestAnAminoAcidSetHasNoMixcrColumns := func() {
+	s := exportSpecs.variantSettings("blk", undefined, "imgt", undefined, false, true)
+	test.isEqual(AA_SEQUENCE_COLUMNS + AA_LENGTH_COLUMNS + FIXED_COLUMNS, len(s.columns))
+	test.isEqual(AA_SEQUENCE_COLUMNS, countOf(s, "pl7.app/vdj/sequence"))
+	test.isEqual(0, countOf(s, "pl7.app/vdj/geneHit"))
+	test.isEqual(0, countOf(s, "pl7.app/vdj/geneHitWithAllele"))
+	test.isEqual(0, countOf(s, "pl7.app/vdj/isotype"))
+	test.isEqual(0, countOf(s, "pl7.app/vdj/sequence/productive"))
+	test.isEqual(0, countOf(s, "pl7.app/vdj/germlineSequence"))
+	test.isEqual(0, countOf(s, "pl7.app/vdj/readFlankLength"))
+	test.isEqual(0, countOf(s, "pl7.app/vdj/sequence/annotation"))
+	// Only the CDR3 amino-acid length survives; the junctions and nt lengths are MiXCR's.
+	test.isEqual(AA_LENGTH_COLUMNS, countOf(s, "pl7.app/vdj/sequenceLength"))
+}
+
+TestAnAminoAcidSetHasOnlyAminoAcidSequenceColumns := func() {
+	s := exportSpecs.variantSettings("blk", undefined, "imgt", undefined, false, true)
+	for c in s.columns {
+		if c.spec.name == "pl7.app/vdj/sequence" {
+			test.isEqual("aminoacid", c.spec.domain["pl7.app/alphabet"])
+		}
+	}
+}
+
+TestTheKeyAxisAlphabetFollowsTheForm := func() {
+	ntDomain := exportSpecs.variantSettings("blk", undefined, "imgt", undefined).axes[0].spec.domain
+	test.isEqual("nucleotide", ntDomain["pl7.app/alphabet"])
+	aaDomain := exportSpecs.variantSettings("blk", undefined, "imgt", undefined, false, true).axes[0].spec.domain
+	test.isEqual("aminoacid", aaDomain["pl7.app/alphabet"])
+}
+
 TestTheSegmentsAnnotationMatchesTheViewerContract := func() {
 	s := exportSpecs.variantSettings("blk", undefined, "imgt", ["heavy"])
 	for c in s.columns {
@@ -136,6 +172,17 @@ TestEveryFrameSharesTheKeyAxis := func() {
 	test.isEqual(variant.domain, trace.domain)
 }
 
+// The same three frames, for an amino-acid set, must also share one axis, and its
+// alphabet must say amino acid.
+TestEveryFrameSharesTheKeyAxisForAnAminoAcidSet := func() {
+	variant := exportSpecs.variantSettings("blk", undefined, "imgt", undefined, false, true).axes[0].spec
+	abundance := exportSpecs.abundanceSettings("blk", false, true).axes[1].spec
+	trace := exportSpecs.traceFileColumn("blk", "heavy", true).axesSpec[0]
+	test.isEqual("aminoacid", variant.domain["pl7.app/alphabet"])
+	test.isEqual(variant.domain, abundance.domain)
+	test.isEqual(variant.domain, trace.domain)
+}
+
 TestTheChainsAreSeparatedByDomainNotByAxis := func() {
 	s := exportSpecs.variantSettings("blk", undefined, "imgt", undefined)
 	sides := {}
@@ -167,14 +214,15 @@ TestRegionsCarryTheScheme := func() {
 TestAPropertyBringsItsValuesAndItsSummaries := func() {
 	props := [{ name: "elisa", type: "Double", values: {} }]
 	s := exportSpecs.variantSettings("blk", props, "imgt", undefined)
-	// values, disagrees, and four summaries.
-	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + GERMLINE_COLUMNS + LENGTH_COLUMNS + FLANK_COLUMNS + ANNOTATION_COLUMNS + GERMLINE_SEQUENCE_COLUMNS + FIXED_COLUMNS + 6, len(s.columns))
+	// value, per-well values, disagrees, and four summaries.
+	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + GERMLINE_COLUMNS + LENGTH_COLUMNS + FLANK_COLUMNS + ANNOTATION_COLUMNS + GERMLINE_SEQUENCE_COLUMNS + FIXED_COLUMNS + 7, len(s.columns))
 }
 
 TestALabelGetsNoSummaries := func() {
 	props := [{ name: "note", type: "String", values: {} }]
 	s := exportSpecs.variantSettings("blk", props, "imgt", undefined)
-	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + GERMLINE_COLUMNS + LENGTH_COLUMNS + FLANK_COLUMNS + ANNOTATION_COLUMNS + GERMLINE_SEQUENCE_COLUMNS + FIXED_COLUMNS + 2, len(s.columns))
+	// value, per-well values, and disagrees. No numeric summaries for a label.
+	test.isEqual(SEQUENCE_COLUMNS + GENE_COLUMNS + GERMLINE_COLUMNS + LENGTH_COLUMNS + FLANK_COLUMNS + ANNOTATION_COLUMNS + GERMLINE_SEQUENCE_COLUMNS + FIXED_COLUMNS + 3, len(s.columns))
 }
 
 TestAbundanceCarriesTheSampleAxisFirst := func() {
@@ -185,10 +233,44 @@ TestAbundanceCarriesTheSampleAxisFirst := func() {
 	test.isEqual(1, len(s.columns))
 }
 
-// A consumer splits the abundance column on the plate axis. An unpartitioned
+// A consumer splits the abundance column on the sample axis. An unpartitioned
 // column has the single empty key `[]`, so index 0 does not exist there.
-TestAbundanceIsPartitionedOnThePlateAxis := func() {
+TestAbundanceIsPartitionedOnTheSampleAxis := func() {
 	test.isEqual(1, exportSpecs.abundanceSettings("blk").partitionKeyLength)
+}
+
+// A header-name set reads one synthetic sample per file. So the sample axis and
+// the abundance count read "File" and "Number of Sequences", not "Plate" and
+// "Number of Wells".
+TestAbundanceRelabelsForANameSet := func() {
+	plate := exportSpecs.abundanceSettings("blk")
+	test.isEqual("Plate", plate.axes[0].spec.annotations["pl7.app/label"])
+	test.isEqual("Number of Wells", plate.columns[0].spec.annotations["pl7.app/label"])
+
+	named := exportSpecs.abundanceSettings("blk", true)
+	test.isEqual("File", named.axes[0].spec.annotations["pl7.app/label"])
+	test.isEqual("Number of Sequences", named.columns[0].spec.annotations["pl7.app/label"])
+}
+
+// The exported variants frame carries the per-clone list column. A header-name
+// set lists sequence ids, not wells, so downstream reads "Sequence IDs".
+TestExportedWellsColumnRelabelsForANameSet := func() {
+	wellsCol := func(settings) {
+		for c in settings.columns {
+			if c.column == "wells" {
+				return c.spec.annotations
+			}
+		}
+		return undefined
+	}
+	plate := wellsCol(exportSpecs.variantSettings("blk", undefined, "imgt", undefined))
+	test.isEqual("Wells", plate["pl7.app/label"])
+	test.isEqual("default", plate["pl7.app/table/visibility"])
+
+	named := wellsCol(exportSpecs.variantSettings("blk", undefined, "imgt", undefined, true))
+	test.isEqual("Sequence IDs", named["pl7.app/label"])
+	// A name set lists sequence ids, not wells, so the column is optional downstream.
+	test.isEqual("optional", named["pl7.app/table/visibility"])
 }
 
 TestVariantColumnsAreNotPartitioned := func() {

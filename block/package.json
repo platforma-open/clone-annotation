@@ -43,7 +43,7 @@
     },
     "meta": {
       "title": "Clone Annotation",
-      "description": "Annotate Sanger traces of picked clones, with plate and well identity and quality control.",
+      "description": "Annotate picked clones from Sanger traces, FASTA or FASTQ, with clone identity and quality control.",
       "longDescription": "file:../docs/description.md",
       "logo": "file:logos/block-logo.png",
       "organization": {

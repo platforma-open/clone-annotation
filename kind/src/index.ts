@@ -19,6 +19,12 @@ export type NumberingScheme = "imgt" | "kabat" | "chothia";
 /** Which well verdicts reach the exported variants. */
 export type ExportWells = "passed" | "passedAndWarning" | "all";
 
+/** The input form a set is read as. Declared by the scientist, never sniffed from the files. */
+export type InputForm = "trace" | "fastaNt" | "fastaAa" | "fastqNt";
+
+/** One record per file, or many records in one file matched on their headers. */
+export type FileShape = "perFile" | "combined";
+
 /**
  * Species MiXCR can align against out of its bundled reference library. Spelled
  * the way MiXCR takes them, so nothing has to translate the value on the way.
@@ -48,6 +54,12 @@ export type Species =
  * conventions.
  */
 export type BlockParams = {
+  /** Which input form the set is read as. Chooses the reader; the whole tail is shared. */
+  form?: InputForm;
+
+  /** One record per file, or many per file. A template that drops it reopens a combined set as per-file. */
+  fileShape?: FileShape;
+
   /** How a path divides into plate, well and chain, e.g. `{{Plate}}/{{Well}}_{{Chain}}.ab1`. */
   namePattern?: string;
 
@@ -69,6 +81,8 @@ export type BlockParams = {
 
 const NUMBERING_SCHEMES: NumberingScheme[] = ["imgt", "kabat", "chothia"];
 const EXPORT_WELLS: ExportWells[] = ["passed", "passedAndWarning", "all"];
+const INPUT_FORMS: InputForm[] = ["trace", "fastaNt", "fastaAa", "fastqNt"];
+const FILE_SHAPES: FileShape[] = ["perFile", "combined"];
 const SPECIES: Species[] = [
   "alpaca",
   "salmon",
@@ -103,7 +117,8 @@ function asOneOf<T extends string>(value: unknown, allowed: T[], field: string):
 function parseInitializationParams(value: unknown): BlockParams {
   assertParamsObject(value);
 
-  const { namePattern, qualityThreshold, numberingScheme, species, exportWells } = value;
+  const { form, fileShape, namePattern, qualityThreshold, numberingScheme, species, exportWells } =
+    value;
 
   if (qualityThreshold !== undefined) {
     if (typeof qualityThreshold !== "number" || !Number.isFinite(qualityThreshold))
@@ -112,6 +127,8 @@ function parseInitializationParams(value: unknown): BlockParams {
   }
 
   return {
+    form: asOneOf(form, INPUT_FORMS, "form"),
+    fileShape: asOneOf(fileShape, FILE_SHAPES, "fileShape"),
     namePattern: asString(namePattern, "namePattern"),
     qualityThreshold: qualityThreshold as number | undefined,
     numberingScheme: asOneOf(numberingScheme, NUMBERING_SCHEMES, "numberingScheme"),

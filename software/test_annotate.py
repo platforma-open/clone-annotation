@@ -598,7 +598,7 @@ def test_trim_cuts_the_leader_and_the_tail():
     import trim
     # A 21 nt leader, a 30 nt domain (10 residues from protein index 7), a 48 nt tail.
     read = "A" * 21 + "C" * 30 + "G" * 48
-    best = ("H", 0, (["1"] * 10, ["A"] * 10, 100.0, 7), 100.0)
+    best = ("H", 0, (["1"] * 10, ["A"] * 10, 100.0, 7, "H"), 100.0)
     # Span (21, 51); with the 9 nt margin the cut is read[12:60].
     check("the leader and tail are cut to the domain plus a margin",
           trim.trim(read, best), "A" * 9 + "C" * 30 + "G" * 9)
@@ -609,9 +609,27 @@ def test_trim_uses_the_numbered_strand_for_a_reverse_frame():
     from annotate import reverse_complement
     strand = "A" * 21 + "C" * 30 + "G" * 48
     read = reverse_complement(strand)
-    best = ("H", 3, (["1"] * 10, ["A"] * 10, 100.0, 7), 100.0)
+    best = ("H", 3, (["1"] * 10, ["A"] * 10, 100.0, 7, "H"), 100.0)
     check("a reverse frame is cut on its own strand, domain forward",
           trim.trim(read, best), "A" * 9 + "C" * 30 + "G" * 9)
+
+
+def test_pick_frame_tuple_matches_what_trim_and_annotate_unpack():
+    # A real read_anarci -> pick_frame path. The trim tests above hand-build the
+    # tuple; this one reads it, so a change to read_anarci's arity breaks here
+    # rather than silently in the nucleotide forms' trim at run time.
+    from annotate import pick_frame, read_anarci
+    work = tempfile.mkdtemp()
+    path = os.path.join(work, "anarci_H.csv")
+    with open(path, "w") as h:
+        h.write("Id,domain_no,hmm_species,chain_type,e-value,score,seqstart_index,seqend_index,1,2,3\n")
+        h.write("s00001|0,0,human,H,1e-50,100.0,0,9,A,C,D\n")
+    best = pick_frame("s00001", {"H": read_anarci(path)})
+    check("a domain was found", best is not None, True)
+    _bucket, _frame, found, _score = best
+    check("the found tuple has five parts", len(found), 5)
+    _labels, _residues, _sc, _start, chain_type = found
+    check("the chain type is read from the CSV", chain_type, "H")
 
 
 def test_trim_keeps_the_whole_read_without_numbering():
@@ -852,7 +870,13 @@ def test_every_chain_word_the_pattern_reads_has_a_class():
 def test_the_detected_chain_prefers_mixcr_where_it_agrees():
     from annotate import detected_chain
     check("MiXCR names the locus", detected_chain({"observedChain": "KL", "mixcrChains": "IGL"}), "IGL")
-    check("no MiXCR hit", detected_chain({"observedChain": "KL"}), "IGK/IGL")
+    check("no MiXCR hit and no ANARCI type", detected_chain({"observedChain": "KL"}), "IGK/IGL")
+    check("ANARCI calls lambda without MiXCR",
+          detected_chain({"observedChain": "KL", "anarciChainType": "L"}), "IGL")
+    check("ANARCI calls kappa without MiXCR",
+          detected_chain({"observedChain": "KL", "anarciChainType": "K"}), "IGK")
+    check("MiXCR locus wins over the ANARCI type",
+          detected_chain({"observedChain": "KL", "mixcrChains": "IGL", "anarciChainType": "K"}), "IGL")
     check("MiXCR disagrees with ANARCI", detected_chain({"observedChain": "H", "mixcrChains": "IGK"}), "IGH")
     check("nothing numbered", detected_chain({"mixcrChains": "IGH"}), "")
 
@@ -994,6 +1018,55 @@ def test_one_chain_differing_makes_a_different_clone():
     check("neither is collapsed", sorted(r["wellCount"] for r in table), ["1", "1"])
 
 
+def sequence_aa(seq_id, well, chain, observed, aa):
+    """An amino-acid sequence: a numbered protein with no nucleotide at all."""
+    e = sequence(seq_id, "Plate1", well, chain, "k" + well, observed)
+    e["aa"] = {"VDJRegion": aa, "CDR3": aa[:6]}
+    return e
+
+
+def clones_of_aa(rows, properties=()):
+    import csv as _csv
+    from annotate import pair_up, write_clones
+    work = tempfile.mkdtemp()
+    pair_up(rows, True)
+    out = os.path.join(work, "clones.tsv")
+    write_clones(out, rows, [{"id": r["id"]} for r in rows], list(properties), amino_acid=True)
+    return list(_csv.DictReader(open(out), delimiter="\t"))
+
+
+def test_variant_key_uses_amino_acid_when_asked():
+    from annotate import variant_key_of
+    pairing = {"heavy": {"aa": {"VDJRegion": "QVQLVE"}}, "light": {"aa": {"VDJRegion": "DIQMTQ"}}}
+    check("the nt alphabet sees no nucleotide", variant_key_of(pairing), None)
+    check("the aa alphabet keys on the protein", variant_key_of(pairing, True), "QVQLVE\x00DIQMTQ")
+
+
+def test_amino_acid_clones_collapse_on_the_protein():
+    rows = [sequence_aa("m0", "A1", "IGH", "H", "QVQLVESGGG"),
+            sequence_aa("m1", "A1", "IGL", "KL", "DIQMTQSPSS"),
+            sequence_aa("m2", "B2", "IGH", "H", "QVQLVESGGG"),
+            sequence_aa("m3", "B2", "IGL", "KL", "DIQMTQSPSS"),
+            sequence_aa("m4", "C3", "IGH", "H", "EVQLVESGGG"),
+            sequence_aa("m5", "C3", "IGL", "KL", "DIQMTQSPSS")]
+    table = clones_of_aa(rows)
+    check("two distinct clones on amino acid", len(table), 2)
+    check("the shared protein is seen twice", table[0]["wellCount"], "2")
+    check("both wells listed", table[0]["wells"], "Plate1 A1, Plate1 B2")
+
+
+def test_amino_acid_collapse_leaves_the_nucleotide_path_alone():
+    # The same shape with nucleotide collapses on nucleotide by default: the aa
+    # switch is off, so nothing about the trace/FASTA-nt flow changes.
+    rows = [sequence_nt("m0", "A1", "IGH", "H", "ACGTACGT"),
+            sequence_nt("m1", "A1", "IGL", "KL", "TTTTTTTT"),
+            sequence_nt("m2", "B2", "IGH", "H", "ACGTACGT"),
+            sequence_nt("m3", "B2", "IGL", "KL", "TTTTTTTT")]
+    table = clones_of(rows)
+    check("one clone, both wells", len(table), 1)
+    check("seen twice", table[0]["wellCount"], "2")
+
+
 def test_wells_that_disagree_on_a_reading_are_marked():
     rows = [sequence_nt("m0", "A1", "IGH", "H", "ACGTACGT"),
             sequence_nt("m1", "B2", "IGH", "H", "ACGTACGT")]
@@ -1001,6 +1074,7 @@ def test_wells_that_disagree_on_a_reading_are_marked():
             "values": {"Plate1\u0000A1": "2.5", "Plate1\u0000B2": "0.1"}}
     table = clones_of(rows, [prop])
     row = table[0]
+    check("value is the mean", row["prop_0_value"], "1.3")
     check("both values kept", row["prop_0_values"], "Plate1 A1: 2.5, Plate1 B2: 0.1")
     check("disagreement marked", row["prop_0_disagrees"], "yes")
     check("max", row["prop_0_max"], "2.5")
@@ -1014,6 +1088,7 @@ def test_wells_that_agree_carry_no_mark():
     prop = {"name": "elisa", "type": "Double",
             "values": {"Plate1\u0000A1": "2.5", "Plate1\u0000B2": "2.5"}}
     row = clones_of(rows, [prop])[0]
+    check("value is the agreed reading", row["prop_0_value"], "2.5")
     check("no mark", row["prop_0_disagrees"], "")
     check("still summarised", row["prop_0_max"], "2.5")
 
@@ -1024,9 +1099,36 @@ def test_a_label_gets_no_arithmetic():
     prop = {"name": "note", "type": "String",
             "values": {"Plate1\u0000A1": "hit", "Plate1\u0000B2": "weak"}}
     row = clones_of(rows, [prop])[0]
+    check("value joins the distinct labels", row["prop_0_value"], "hit / weak")
     check("values kept as they stand", row["prop_0_values"], "Plate1 A1: hit, Plate1 B2: weak")
     check("disagreement marked", row["prop_0_disagrees"], "yes")
-    check("no summary invented", row["prop_0_max"], "")
+    check("a label gets no summary columns", "prop_0_max" in row, False)
+
+
+def test_properties_join_whichever_key_the_sheet_used():
+    # The lookup tries plate+well, then the id alone, so it finds a value whichever
+    # form the sheet wrote.
+    import csv as _csv
+    from annotate import pair_up, write_clones
+
+    def value_of(rows, prop):
+        work = tempfile.mkdtemp()
+        pair_up(rows, True)
+        out = os.path.join(work, "clones.tsv")
+        write_clones(out, rows, [{"id": r["id"]} for r in rows], [prop])
+        return list(_csv.DictReader(open(out), delimiter="\t"))[0]["prop_0_value"]
+
+    # A combined set stamps the source file as the "plate"; the sheet keys on the
+    # id alone. The join must ignore the file.
+    combined = [sequence_nt("m0", "cloneX", "IGH", "H", "ACGTACGT")]
+    combined[0]["plate"] = "combined.fasta"
+    check("id-only sheet joins past the file label",
+          value_of(combined, {"name": "e", "type": "Double", "values": {"cloneX": "2.5"}}), "2.5")
+
+    # A real plate/well set: the sheet keys on plate and well together.
+    pw = [sequence_nt("m0", "A1", "IGH", "H", "ACGTACGT")]  # sequence_nt sets plate Plate1
+    check("plate-and-well sheet still joins",
+          value_of(pw, {"name": "e", "type": "Double", "values": {"Plate1\u0000A1": "3.5"}}), "3.5")
 
 
 def test_abundance_counts_wells_per_plate():
@@ -1294,6 +1396,7 @@ def test_a_well_with_two_identical_candidates_counts_once():
     write_clones(os.path.join(work, "clones.tsv"), rows, [{"id": r["id"]} for r in rows], [prop])
     clone = list(_csv.DictReader(open(os.path.join(work, "clones.tsv")), delimiter="\t"))[0]
     check("each well once", (clone["wells"], clone["wellCount"]), ("Plate1 A1, Plate1 B1", "2"))
+    check("value is the measured well", clone["prop_0_value"], "120.0")
     check("B1 was not measured and shows so", clone["prop_0_values"], "Plate1 A1: 120")
     write_abundance(os.path.join(work, "abundance.tsv"), rows)
     ab = list(_csv.DictReader(open(os.path.join(work, "abundance.tsv")), delimiter="\t"))

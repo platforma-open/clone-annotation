@@ -8,11 +8,27 @@ pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
 xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
 render := import("@platforma-sdk/workflow-tengo:render")
 smart := import("@platforma-sdk/workflow-tengo:smart")
+ll := import("@platforma-sdk/workflow-tengo:ll")
 clones := import(":clones")
 sequenceCols := import(":sequence-cols")
 readCols := import(":read-cols")
 exportSpecs := import(":export-specs")
 tracy := import(":tracy")
+readerTrace := import(":reader-trace")
+readerFastaNt := import(":reader-fasta-nt")
+readerFastaAa := import(":reader-fasta-aa")
+readerFastqNt := import(":reader-fastq-nt")
+
+// One reader per input form. Each writes the same reads-stage contract, so the
+// whole annotate -> pair -> collapse -> emit tail is shared. Modelled on
+// samples-and-data's dsProcessors dispatch. The amino-acid reader writes no
+// nucleotide, so its tail skips MiXCR. The FASTQ reader trims by the quality floor.
+readers := {
+	"trace": readerTrace,
+	"fastaNt": readerFastaNt,
+	"fastaAa": readerFastaAa,
+	"fastqNt": readerFastqNt
+}
 
 traceFilesTpl := assets.importTemplate(":trace-files")
 
@@ -33,28 +49,60 @@ wf.body(func(args) {
 		traces = []
 	}
 
+	// The fields that identify a clone, in order. The model declares it per form.
+	identity := args.identity
+	if is_undefined(identity) {
+		identity = ["plate", "well"]
+	}
+
+	// Sheet properties and pattern tags together feed the result tables. The
+	// sheet-join QC below (clones.attach) stays on the sheet properties alone, so
+	// a clone that carries a tag but no measurement is still reported as unmeasured.
+	allProps := []
+	if !is_undefined(args.properties) {
+		for p in args.properties {
+			allProps = append(allProps, p)
+		}
+	}
+	if !is_undefined(args.tagProperties) {
+		for p in args.tagProperties {
+			allProps = append(allProps, p)
+		}
+	}
+
 	// Traces are staged under generated ids, not their own names: a path holds
 	// separators and whatever characters the sequencing service used. The
 	// manifest carries the real path back into the report, and the plate the
 	// read quality charts facet on.
+	// A combined file holds many records, so one file is staged once and each of
+	// its records is read by index. Files are deduplicated by handle; a per-file
+	// set has one record per file, read at index 0.
 	manifest := {}
 	blobs := {}
+	fileIds := {}
 	withIds := []
-	for i, t in traces {
-		imp := file.importFile(t.handle)
-		fileImports[t.handle] = imp.handle
+	nextFile := 0
+	for t in traces {
+		fileId := fileIds[t.handle]
+		if is_undefined(fileId) {
+			imp := file.importFile(t.handle)
+			fileImports[t.handle] = imp.handle
+			fileId = fmt.sprintf("t%05d", nextFile)
+			nextFile = nextFile + 1
+			fileIds[t.handle] = fileId
+			blobs[fileId] = imp.file
 
-		id := fmt.sprintf("t%05d", i)
-		plate := "Unplaced"
-		if !is_undefined(t.fields) {
-			plate = t.fields.plate == "" ? "No plate" : t.fields.plate
+			plate := "Unplaced"
+			if !is_undefined(t.fields) {
+				plate = t.fields.plate == "" ? "No plate" : t.fields.plate
+			}
+			manifest[fileId] = { path: t.path, plate: plate }
 		}
-		manifest[id] = { path: t.path, plate: plate }
-		blobs[id] = imp.file
-		withIds = append(withIds, { id: id, path: t.path, fields: t.fields })
+		recordIndex := is_undefined(t.recordIndex) ? 0 : t.recordIndex
+		withIds = append(withIds, { id: fileId, recordIndex: recordIndex, path: t.path, fields: t.fields })
 	}
 
-	grouped := clones.group(traces)
+	grouped := clones.group(traces, identity)
 	joined := clones.attach(grouped, args.properties)
 
 	exports := {}
@@ -76,44 +124,36 @@ wf.body(func(args) {
 		// One sequence per plate, well and chain, naming the reads that should
 		// become it. Built here rather than in the driver so the pattern is read
 		// in one place.
-		plan := clones.sequences(withIds)
+		plan := clones.sequences(withIds, identity)
 
-		tracySw := assets.importSoftware("@platforma-open/milaboratories.software-tracy:main")
-
-		// One job for the whole plate. Tracy reads one file per run, so the
-		// driver loops inside the job rather than the workflow scheduling one
-		// job per well.
-		run := exec.builder().
-			software(tracySw).
-			writeFile(tracy.driverName, tracy.driverScript).
-			writeFile(tracy.manifestName, manifest).
-			writeFile(tracy.planName, plan).
-			mkDir(tracy.callsDir).
-			arg(tracy.driverName).
-			arg(tracy.tracesDir).
-			arg(tracy.callsDir).
-			arg(tracy.manifestName).
-			arg(string(threshold)).
-			arg(tracy.planName).
-			saveFileSet("calls", tracy.callsDir + "/.*\\.fastq").
-			saveFile(tracy.reportName).
-			saveFile(tracy.peaksName).
-			saveFile(tracy.readsName).
-			saveFile(tracy.framesName).
-			saveFile(tracy.nucleotideName).
-			saveFileContent(tracy.reportName).
-			inMediumQueue()
-
-		for id, blob in blobs {
-			run.addFile(tracy.tracesDir + "/" + id, blob)
+		// The reads stage. The form picks the reader; every reader returns the same
+		// contract, so everything below is shared.
+		form := args.form
+		if is_undefined(form) {
+			form = "trace"
+		}
+		reader := readers[form]
+		if is_undefined(reader) {
+			ll.panic("No reader for input form %v", form)
 		}
 
-		result := run.run()
-		outputs.traceReport = result.getFileContent(tracy.reportName)
+		// An amino-acid set has no nucleotide, so the whole MiXCR half is skipped:
+		// no germline, no trim, no alignment. ANARCI numbers the protein directly
+		// and annotate.py collapses on amino acid.
+		isAminoAcid := form == "fastaAa"
+
+		contract := reader.read({
+			blobs: blobs,
+			manifest: manifest,
+			plan: plan,
+			threshold: threshold,
+			combined: args.fileShape == "combined"
+		})
+		outputs.traceReport = contract.reportContent
 
 		readsBuilder := pframes.pFrameBuilder()
 		for id, column in xsv.importFile(
-			result.getFile(tracy.readsName), "tsv",
+			contract.reads, "tsv",
 			readCols.settings(threshold), { splitDataAndSpec: true }
 		) {
 			readsBuilder.add(id, column.spec, column.data)
@@ -130,18 +170,17 @@ wf.body(func(args) {
 		}
 
 		anarciSw := assets.importSoftware("@platforma-open/milaboratories.software-anarci:main")
-		mixcrSw := assets.importSoftware("@platforma-open/milaboratories.software-mixcr:main")
 		annotateSw := assets.importSoftware("@platforma-open/milaboratories.clone-annotation.software:annotate")
-		trimSw := assets.importSoftware("@platforma-open/milaboratories.clone-annotation.software:trim")
 
 		// ANARCI recognises a variable domain by its shape, so it needs no
-		// reference. The six frames go in and the one that is a domain comes
-		// back numbered, which is how the reading frame is found.
+		// reference. For a nucleotide form the six frames go in and the one that is
+		// a domain comes back numbered, which is how the reading frame is found. For
+		// an amino-acid form the protein is the one frame and is numbered directly.
 		// The placeholders matter: ANARCI writes no file at all when it can
 		// number nothing, and the step would then fail on a missing output.
 		anarci := exec.builder().
 			software(anarciSw).
-			addFile(tracy.framesName, result.getFile(tracy.framesName)).
+			addFile(tracy.framesName, contract.frames).
 			arg("-i").arg(tracy.framesName).
 			arg("--scheme").arg(scheme).
 			arg("--ncpu").argExpr("{system.cpu}").
@@ -154,171 +193,25 @@ wf.body(func(args) {
 			inMediumQueue().
 			run()
 
-		// Two MiXCR aligns, because no single one gives both the V(D)J and the constant.
-		// The main align (below) runs on the read cut to its domain, so V cannot over-extend
-		// and D, J, CDR3 and FR4 align for every read whatever its tail is. A second align
-		// (alignConstant) runs on the full read with the right boundary at C, which aligns
-		// the constant region and calls the C gene and isotype where the tail is a real
-		// constant. annotate.py takes the V(D)J from the first and the C gene / isotype from
-		// the second. A C boundary on its own would lose J wherever the tail is vector; the
-		// trim covers those. See wip/domain-trim-before-mixcr.md.
-		trimmed := exec.builder().
-			software(trimSw).
-			addFile(tracy.nucleotideName, result.getFile(tracy.nucleotideName)).
-			addFile("anarci_H.csv", anarci.getFile("anarci_H.csv")).
-			addFile("anarci_KL.csv", anarci.getFile("anarci_KL.csv")).
-			arg("--sequences").arg(tracy.nucleotideName).
-			arg("--csv_h").arg("anarci_H.csv").
-			arg("--csv_kl").arg("anarci_KL.csv").
-			arg("--out").arg("trimmed.fasta").
-			saveFile("trimmed.fasta").
-			printErrStreamToStdout().
-			inMediumQueue().
-			run()
-
-		mixcrAlign := func(input, boundary, output) {
-			return exec.builder().
-				software(mixcrSw).
-				env("MI_USE_SYSTEM_CA", "true").
-				secret("MI_LICENSE", "MI_LICENSE").
-				addFile(input.name, input.file).
-				arg("align").
-				arg("-p").arg("generic-amplicon").
-				arg("--species").arg(species).
-				arg("--rna").
-				arg("--floating-left-alignment-boundary").
-				// The right boundary takes a required value; passing the flag bare makes it
-				// swallow the next argument. `J` for the main align (read cut to the domain),
-				// `C` for the constant align (full read ending in the constant region).
-				arg("--floating-right-alignment-boundary").arg(boundary).
-				// Required by the generic-amplicon preset: its bundle fails validation at
-				// align time without an assembling feature, even though this block runs no
-				// assemble step. CDR3 is the standard choice.
-				arg("--assemble-clonotypes-by").arg("CDR3").
-				// Without this the FASTA header is thrown away during alignment and
-				// `-descrsR1` has nothing to export, so the join loses its key.
-				arg("-OsaveOriginalReads=true").
-				// A sequence built from one read covers one end of the domain and
-				// may stop short of CDR3. Dropping those would lose a fifth of a
-				// real plate from the germline half without saying so.
-				arg("--keep-non-CDR3-alignments").
-				arg("--threads").argExpr("{system.cpu}").
-				arg(input.name).
-				arg(output).
-				saveFile(output).
-				printErrStreamToStdout().
-				inMediumQueue().
-				run()
-		}
-
-		align := mixcrAlign(
-			{ name: "trimmed.fasta", file: trimmed.getFile("trimmed.fasta") },
-			"J", "alignments.vdjca")
-		alignConstant := mixcrAlign(
-			{ name: tracy.nucleotideName, file: result.getFile(tracy.nucleotideName) },
-			"C", "constant.vdjca")
-
-		// The C gene and isotype, from the constant align's full-read alignments. Only these
-		// two are taken; the V(D)J of this pass is ignored (the main align gives it). Empty
-		// for a read whose tail is not a real constant, which is the honest answer.
-		exportedConstant := exec.builder().
-			software(mixcrSw).
-			env("MI_USE_SYSTEM_CA", "true").
-			secret("MI_LICENSE", "MI_LICENSE").
-			addFile("constant.vdjca", alignConstant.getFile("constant.vdjca")).
-			arg("exportAlignments").
-			arg("-descrsR1").
-			arg("-cGene").
-			arg("-cHit").
-			arg("-isotype").arg("primary").
-			arg("constant.vdjca").
-			arg("constant.tsv").
-			saveFile("constant.tsv").
-			printErrStreamToStdout().
-			inMediumQueue().
-			run()
-
-		// annotate.py reads these columns by header name, not by position, so the
-		// preset is free to add its own columns first. A mutation flag takes an
-		// optional trailing argument, so each is followed by another flag and the
-		// no-argument `-vAlignment` stays last before the positionals; a mutation
-		// flag placed there would swallow the input file. The gene-feature strings
-		// must match MIXCR_PARAM_FIELDS in annotate.py.
-		exported := exec.builder().
-			software(mixcrSw).
-			env("MI_USE_SYSTEM_CA", "true").
-			secret("MI_LICENSE", "MI_LICENSE").
-			addFile("alignments.vdjca", align.getFile("alignments.vdjca")).
-			arg("exportAlignments").
-			arg("-descrsR1").
-			arg("-topChains").
-			arg("-vGene").
-			arg("-dGene").
-			arg("-jGene").
-			arg("-cGene").
-			arg("-vHit").
-			arg("-dHit").
-			arg("-jHit").
-			arg("-cHit").
-			arg("-isotype").arg("primary").
-			arg("-nMutationsCount").arg("{FR1Begin:FR3End}").
-			arg("-nMutationsRate").arg("{FR1Begin:FR3End}").
-			arg("-aaMutationsCount").arg("{FR1Begin:FR3End}").
-			arg("-aaMutationsRate").arg("{FR1Begin:FR3End}").
-			arg("-nMutationsCount").arg("FR4").
-			arg("-nMutationsRate").arg("FR4").
-			arg("-aaMutationsCount").arg("FR4").
-			arg("-aaMutationsRate").arg("FR4").
-			arg("-nMutationsCount").arg("{FR1Begin:FR3End},FR4").
-			arg("-aaMutationsCount").arg("CDR1,CDR2").
-			arg("-aaMutationsCount").arg("FR1,FR2,FR3,FR4").
-			arg("-nLength").arg("VJJunction").
-			arg("-nLength").arg("VDJunction").
-			arg("-nLength").arg("DJJunction").
-			// V/D/J/C coverage markup for the viewer, re-based onto the block's own
-			// VDJRegion. The window is CDR1Begin:CDR3End, not VDJRegion: reads start
-			// inside FR1, so MiXCR marks the whole VDJRegion uncovered but still covers
-			// CDR1 through CDR3. annotate.py extends V over FR1 and J over the tail.
-			arg("-nFeature").arg("{CDR1Begin:CDR3End}").
-			arg("-nAnnotationString").arg("Segments").arg("{CDR1Begin:CDR3End}").
-			// Raw V/D/J alignments and the read, for the germline mismatch track.
-			// annotate.py rebuilds the germline from these; the feature-based germline
-			// export cannot reach CDR3, but the alignments cover it.
-			arg("-vHitScore").
-			arg("-vAlignment").
-			arg("-dAlignment").
-			arg("-jAlignment").
-			arg("alignments.vdjca").
-			arg("alignments.tsv").
-			saveFile("alignments.tsv").
-			printErrStreamToStdout().
-			inMediumQueue().
-			run()
-
 		// Whether pairing applies at all is the scientist's declaration: a
 		// pattern with no chain token says the material is already one
 		// sequence, and nothing waits for a partner it never had.
 		chainsDeclared := !is_undefined(args.declaredFields) &&
 			args.declaredFields.chain == true
 
+		// The annotate step is shared by every form. The MiXCR inputs below are
+		// added only for a nucleotide form; an amino-acid form has no nucleotide,
+		// so it carries no germline and annotate collapses on amino acid instead.
 		annotated := exec.builder().
 			software(annotateSw).
-			addFile(tracy.reportName, result.getFile(tracy.reportName)).
+			addFile(tracy.reportName, contract.report).
 			addFile("anarci_H.csv", anarci.getFile("anarci_H.csv")).
 			addFile("anarci_KL.csv", anarci.getFile("anarci_KL.csv")).
-			addFile("alignments.tsv", exported.getFile("alignments.tsv")).
-			addFile("constant.tsv", exportedConstant.getFile("constant.tsv")).
-			addFile(tracy.nucleotideName, result.getFile(tracy.nucleotideName)).
-			addFile(tracy.peaksName, result.getFile(tracy.peaksName)).
 			arg("--report").arg(tracy.reportName).
-			arg("--sequences").arg(tracy.nucleotideName).
-			arg("--peaks").arg(tracy.peaksName).
 			arg("--scheme").arg(scheme).
 			arg("--csv_h").arg("anarci_H.csv").
 			arg("--csv_kl").arg("anarci_KL.csv").
-			arg("--mixcr").arg("alignments.tsv").
-			arg("--constant").arg("constant.tsv").
-			writeFile("properties.json", is_undefined(args.properties) ? [] : args.properties).
+			writeFile("properties.json", allProps).
 			arg("--properties").arg("properties.json").
 			arg("--out").arg("annotation.json").
 			arg("--out_sequences_tsv").arg("sequences.tsv").
@@ -341,8 +234,169 @@ wf.body(func(args) {
 			printErrStreamToStdout().
 			inMediumQueue()
 
+		if isAminoAcid {
+			annotated.arg("--amino-acid")
+		} else {
+			mixcrSw := assets.importSoftware("@platforma-open/milaboratories.software-mixcr:main")
+			trimSw := assets.importSoftware("@platforma-open/milaboratories.clone-annotation.software:trim")
+
+			// Two MiXCR aligns, because no single one gives both the V(D)J and the constant.
+			// The main align (below) runs on the read cut to its domain, so V cannot over-extend
+			// and D, J, CDR3 and FR4 align for every read whatever its tail is. A second align
+			// (alignConstant) runs on the full read with the right boundary at C, which aligns
+			// the constant region and calls the C gene and isotype where the tail is a real
+			// constant. annotate.py takes the V(D)J from the first and the C gene / isotype from
+			// the second. A C boundary on its own would lose J wherever the tail is vector; the
+			// trim covers those. See wip/domain-trim-before-mixcr.md.
+			trimmed := exec.builder().
+				software(trimSw).
+				addFile(tracy.nucleotideName, contract.nucleotide).
+				addFile("anarci_H.csv", anarci.getFile("anarci_H.csv")).
+				addFile("anarci_KL.csv", anarci.getFile("anarci_KL.csv")).
+				arg("--sequences").arg(tracy.nucleotideName).
+				arg("--csv_h").arg("anarci_H.csv").
+				arg("--csv_kl").arg("anarci_KL.csv").
+				arg("--out").arg("trimmed.fasta").
+				saveFile("trimmed.fasta").
+				printErrStreamToStdout().
+				inMediumQueue().
+				run()
+
+			mixcrAlign := func(input, boundary, output) {
+				return exec.builder().
+					software(mixcrSw).
+					env("MI_USE_SYSTEM_CA", "true").
+					secret("MI_LICENSE", "MI_LICENSE").
+					addFile(input.name, input.file).
+					arg("align").
+					arg("-p").arg("generic-amplicon").
+					arg("--species").arg(species).
+					arg("--rna").
+					arg("--floating-left-alignment-boundary").
+					// The right boundary takes a required value; passing the flag bare makes it
+					// swallow the next argument. `J` for the main align (read cut to the domain),
+					// `C` for the constant align (full read ending in the constant region).
+					arg("--floating-right-alignment-boundary").arg(boundary).
+					// Required by the generic-amplicon preset: its bundle fails validation at
+					// align time without an assembling feature, even though this block runs no
+					// assemble step. CDR3 is the standard choice.
+					arg("--assemble-clonotypes-by").arg("CDR3").
+					// Without this the FASTA header is thrown away during alignment and
+					// `-descrsR1` has nothing to export, so the join loses its key.
+					arg("-OsaveOriginalReads=true").
+					// A sequence built from one read covers one end of the domain and
+					// may stop short of CDR3. Dropping those would lose a fifth of a
+					// real plate from the germline half without saying so.
+					arg("--keep-non-CDR3-alignments").
+					arg("--threads").argExpr("{system.cpu}").
+					arg(input.name).
+					arg(output).
+					saveFile(output).
+					printErrStreamToStdout().
+					inMediumQueue().
+					run()
+			}
+
+			align := mixcrAlign(
+				{ name: "trimmed.fasta", file: trimmed.getFile("trimmed.fasta") },
+				"J", "alignments.vdjca")
+			alignConstant := mixcrAlign(
+				{ name: tracy.nucleotideName, file: contract.nucleotide },
+				"C", "constant.vdjca")
+
+			// The C gene and isotype, from the constant align's full-read alignments. Only these
+			// two are taken; the V(D)J of this pass is ignored (the main align gives it). Empty
+			// for a read whose tail is not a real constant, which is the honest answer.
+			exportedConstant := exec.builder().
+				software(mixcrSw).
+				env("MI_USE_SYSTEM_CA", "true").
+				secret("MI_LICENSE", "MI_LICENSE").
+				addFile("constant.vdjca", alignConstant.getFile("constant.vdjca")).
+				arg("exportAlignments").
+				arg("-descrsR1").
+				arg("-cGene").
+				arg("-cHit").
+				arg("-isotype").arg("primary").
+				arg("constant.vdjca").
+				arg("constant.tsv").
+				saveFile("constant.tsv").
+				printErrStreamToStdout().
+				inMediumQueue().
+				run()
+
+			// annotate.py reads these columns by header name, not by position, so the
+			// preset is free to add its own columns first. A mutation flag takes an
+			// optional trailing argument, so each is followed by another flag and the
+			// no-argument `-vAlignment` stays last before the positionals; a mutation
+			// flag placed there would swallow the input file. The gene-feature strings
+			// must match MIXCR_PARAM_FIELDS in annotate.py.
+			exported := exec.builder().
+				software(mixcrSw).
+				env("MI_USE_SYSTEM_CA", "true").
+				secret("MI_LICENSE", "MI_LICENSE").
+				addFile("alignments.vdjca", align.getFile("alignments.vdjca")).
+				arg("exportAlignments").
+				arg("-descrsR1").
+				arg("-topChains").
+				arg("-vGene").
+				arg("-dGene").
+				arg("-jGene").
+				arg("-cGene").
+				arg("-vHit").
+				arg("-dHit").
+				arg("-jHit").
+				arg("-cHit").
+				arg("-isotype").arg("primary").
+				arg("-nMutationsCount").arg("{FR1Begin:FR3End}").
+				arg("-nMutationsRate").arg("{FR1Begin:FR3End}").
+				arg("-aaMutationsCount").arg("{FR1Begin:FR3End}").
+				arg("-aaMutationsRate").arg("{FR1Begin:FR3End}").
+				arg("-nMutationsCount").arg("FR4").
+				arg("-nMutationsRate").arg("FR4").
+				arg("-aaMutationsCount").arg("FR4").
+				arg("-aaMutationsRate").arg("FR4").
+				arg("-nMutationsCount").arg("{FR1Begin:FR3End},FR4").
+				arg("-aaMutationsCount").arg("CDR1,CDR2").
+				arg("-aaMutationsCount").arg("FR1,FR2,FR3,FR4").
+				arg("-nLength").arg("VJJunction").
+				arg("-nLength").arg("VDJunction").
+				arg("-nLength").arg("DJJunction").
+				// V/D/J/C coverage markup for the viewer, re-based onto the block's own
+				// VDJRegion. The window is CDR1Begin:CDR3End, not VDJRegion: reads start
+				// inside FR1, so MiXCR marks the whole VDJRegion uncovered but still covers
+				// CDR1 through CDR3. annotate.py extends V over FR1 and J over the tail.
+				arg("-nFeature").arg("{CDR1Begin:CDR3End}").
+				arg("-nAnnotationString").arg("Segments").arg("{CDR1Begin:CDR3End}").
+				// Raw V/D/J alignments and the read, for the germline mismatch track.
+				// annotate.py rebuilds the germline from these; the feature-based germline
+				// export cannot reach CDR3, but the alignments cover it.
+				arg("-vHitScore").
+				arg("-vAlignment").
+				arg("-dAlignment").
+				arg("-jAlignment").
+				arg("alignments.vdjca").
+				arg("alignments.tsv").
+				saveFile("alignments.tsv").
+				printErrStreamToStdout().
+				inMediumQueue().
+				run()
+
+			annotated.
+				addFile("alignments.tsv", exported.getFile("alignments.tsv")).
+				addFile("constant.tsv", exportedConstant.getFile("constant.tsv")).
+				addFile(tracy.nucleotideName, contract.nucleotide).
+				addFile(tracy.peaksName, contract.peaks).
+				arg("--sequences").arg(tracy.nucleotideName).
+				arg("--peaks").arg(tracy.peaksName).
+				arg("--mixcr").arg("alignments.tsv").
+				arg("--constant").arg("constant.tsv")
+		}
+
 		if chainsDeclared {
 			annotated.arg("--chains-declared")
+		}
+		if args.identityIsName == true {
+			annotated.arg("--name-identity")
 		}
 		if !is_undefined(args.exportWells) {
 			annotated.arg("--export").arg(args.exportWells)
@@ -356,7 +410,7 @@ wf.body(func(args) {
 		// with its filtering, sorting and column chooser.
 		imported := xsv.importFile(
 			annotatedRun.getFile("sequences.tsv"), "tsv",
-			sequenceCols.settings(args.properties),
+			sequenceCols.settings(allProps, args.identityIsName, isAminoAcid),
 			{ splitDataAndSpec: true }
 		)
 
@@ -374,9 +428,9 @@ wf.body(func(args) {
 		if is_undefined(label) || label == "" {
 			label = "Clone Annotation"
 		}
-		params := { blockId: blockId, label: label, scheme: scheme }
-		if !is_undefined(args.properties) {
-			params.properties = args.properties
+		params := { blockId: blockId, label: label, scheme: scheme, identityIsName: args.identityIsName, aminoAcid: isAminoAcid }
+		if len(allProps) > 0 {
+			params.properties = allProps
 		}
 		// Ephemeral, because it waits on the run's output before it can say
 		// which columns exist. A pure template may not await.
@@ -399,25 +453,29 @@ wf.body(func(args) {
 		outputs.variants = pframes.exportFrame(tables.output("variants"))
 
 		// One `.ab1` per variant and chain for the viewer, keyed as the variants are.
-		staged := pcolumn.resourceMapBuilder(1)
-		idOf := {}
-		for id, blob in blobs {
-			staged.add([id], blob)
-			idOf[manifest[id].path] = id
+		// Only a trace is an `.ab1`: a FASTA or FASTQ file would be served as a trace
+		// the viewer cannot read, so the trace-file columns are a trace-only output.
+		if form == "trace" {
+			staged := pcolumn.resourceMapBuilder(1)
+			idOf := {}
+			for id, blob in blobs {
+				staged.add([id], blob)
+				idOf[manifest[id].path] = id
+			}
+			traceFiles := render.createEphemeral(traceFilesTpl, {
+				params: smart.createJsonResource({ idOf: idOf }),
+				traces: staged.build(),
+				traceReads: annotatedRun.getFileContent("trace_reads.tsv")
+			})
+			trace := exportSpecs.datasetTrace(blockId, label)
+			traceFilesBuilder := pframes.pFrameBuilder()
+			for side in ["heavy", "light"] {
+				traceFilesBuilder.add(side + "_trace_file",
+					trace.inject(exportSpecs.traceFileColumn(blockId, side, isAminoAcid)),
+					traceFiles.output(side))
+			}
+			outputs.traceFiles = pframes.exportFrame(traceFilesBuilder.build())
 		}
-		traceFiles := render.createEphemeral(traceFilesTpl, {
-			params: smart.createJsonResource({ idOf: idOf }),
-			traces: staged.build(),
-			traceReads: annotatedRun.getFileContent("trace_reads.tsv")
-		})
-		trace := exportSpecs.datasetTrace(blockId, label)
-		traceFilesBuilder := pframes.pFrameBuilder()
-		for side in ["heavy", "light"] {
-			traceFilesBuilder.add(side + "_trace_file",
-				trace.inject(exportSpecs.traceFileColumn(blockId, side)),
-				traceFiles.output(side))
-		}
-		outputs.traceFiles = pframes.exportFrame(traceFilesBuilder.build())
 	}
 
 	return {

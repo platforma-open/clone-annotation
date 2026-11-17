@@ -36,7 +36,9 @@ COLUMNS := [
 ]
 
 // `sides` lists the sides the set has sequences for. Undefined means both.
-settings := func(sides) {
+settings := func(sides, ...opts) {
+	// A name-keyed set has one row, no plate; its wells are names (option B).
+	nameId := len(opts) > 0 ? opts[0] : false
 	has := { heavy: true, light: true }
 	if !is_undefined(sides) {
 		has = {}
@@ -49,8 +51,12 @@ settings := func(sides) {
 		if !is_undefined(c.side) && has[c.side] != true {
 			continue
 		}
+		label := c.label
+		if nameId && c.column == "wells" {
+			label = "Sequences"
+		}
 		annotations := {
-			"pl7.app/label": c.label,
+			"pl7.app/label": label,
 			"pl7.app/description": c.description,
 			"pl7.app/table/visibility": "default",
 			"pl7.app/table/orderPriority": string(1000 - 10 * i)
@@ -68,8 +74,14 @@ settings := func(sides) {
 		})
 	}
 
+	plateAxis := {
+		name: "pl7.app/vdj/qc/plate",
+		type: "String",
+		annotations: { "pl7.app/label": nameId ? "File" : "Plate" }
+	}
+
 	return {
-		axes: [{ column: "plate", spec: axisSpec }],
+		axes: [{ column: "plate", spec: plateAxis }],
 		columns: columns,
 		storageFormat: "Parquet",
 		partitionKeyLength: 0

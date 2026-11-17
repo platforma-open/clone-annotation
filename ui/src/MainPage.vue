@@ -19,14 +19,18 @@ import { useApp } from "./app";
 import FilesTable from "./FilesTable.vue";
 import ImportDialog from "./ImportDialog.vue";
 import PropertiesDialog from "./PropertiesDialog.vue";
-import { compilePattern, describeSelection } from "./trace_set";
+import { compilePattern, describeCombined, describeSelection } from "./trace_set";
 
 const app = useApp();
 
 const compiled = computed(() => compilePattern(app.model.data.namePattern ?? ""));
 
+// A combined set shows one row per record, matched on its header; every other
+// shape shows one row per file, matched on its path.
 const files = computed(() =>
-  describeSelection(app.model.data.traceFiles ?? [], compiled.value.pattern),
+  (app.model.data.fileShape ?? "perFile") === "combined"
+    ? describeCombined(app.model.data.fastaHeaders ?? [], compiled.value.pattern)
+    : describeSelection(app.model.data.traceFiles ?? [], compiled.value.pattern),
 );
 </script>
 

@@ -6,7 +6,7 @@ describe("PathPattern", () => {
     const p = PathPattern.parse("{{Plate}}/{{:Run}}-{{Well}}.ab1");
     const m = p.match("Plate1/Run7-A10.ab1");
     expect(m?.plate?.value).toBe("Plate1");
-    expect(m?.well.value).toBe("A10");
+    expect(m?.well?.value).toBe("A10");
     expect(m?.tags?.["Run"]?.value).toBe("Run7");
   });
 
@@ -14,7 +14,7 @@ describe("PathPattern", () => {
     const p = PathPattern.parse("{{Plate}}/{{Well}}-{{:Lib}}_{{Chain}}_Run_{{*}}.ab1");
     const m = p.match("Plate1/A1-3_IgG_Run_BARCODE.ab1");
     expect(m?.plate?.value).toBe("Plate1");
-    expect(m?.well.value).toBe("A1");
+    expect(m?.well?.value).toBe("A1");
     expect(m?.chain?.value).toBe("IgG");
   });
 
@@ -22,7 +22,7 @@ describe("PathPattern", () => {
     const p = PathPattern.parse("Plate_{{Chain}}_{{Direction}}_{{Well}}-{{*}}.ab1");
     const m = p.match("Plate_IGH_F_A1-IGH_F.ab1");
     expect(m?.chain?.value).toBe("IGH");
-    expect(m?.well.value).toBe("A1");
+    expect(m?.well?.value).toBe("A1");
   });
 
   // The pattern the import dialog suggests. A default that does not parse would
@@ -33,7 +33,7 @@ describe("PathPattern", () => {
     expect(m?.plate?.value).toBe("P3a");
     expect(m?.chain?.value).toBe("IGH");
     expect(m?.direction?.value).toBe("R");
-    expect(m?.well.value).toBe("B10");
+    expect(m?.well?.value).toBe("B10");
   });
 
   test("direction takes F/R, fwd/rev and a numbered read", () => {
@@ -59,7 +59,7 @@ describe("PathPattern", () => {
     const p = PathPattern.parse("{{Plate}}[_LC]/{{Well}}.ab1");
     const m = p.match("Plate1_LC/A1.ab1");
     expect(m?.plate?.value).toBe("Plate1");
-    expect(m?.well.value).toBe("A1");
+    expect(m?.well?.value).toBe("A1");
     expect(m?.anyMatchers).toEqual([]);
   });
 
@@ -84,8 +84,8 @@ describe("PathPattern", () => {
     expect(PathPattern.parse("{{Well}}.scf").extension).toBe("scf");
   });
 
-  test("a pattern without {{Well}} is refused", () => {
-    expect(() => PathPattern.parse("{{Plate}}/x.ab1")).toThrow(/No \{\{Well\}\}/);
+  test("a pattern with no identity token is refused", () => {
+    expect(() => PathPattern.parse("{{Plate}}/x.ab1")).toThrow(/Well.*or.*Name|Name.*or.*Well/i);
   });
 
   test("an unknown token is refused", () => {
@@ -129,7 +129,7 @@ describe("typed tokens", () => {
     const p = PathPattern.parse("{{Plate}}{{Well}}.{{*}}.ab1");
     const m = p.match("Run7B05.fwd.ab1");
     expect(m?.plate?.value).toBe("Run7");
-    expect(m?.well.value).toBe("B05");
+    expect(m?.well?.value).toBe("B05");
   });
 
   test("a chain glued to a clone number splits where the chain starts", () => {
@@ -142,7 +142,7 @@ describe("typed tokens", () => {
   test("the well takes A1 to P24, padded or not, in either case", () => {
     const p = PathPattern.parse("{{Well}}.ab1");
     for (const w of ["A1", "A01", "H12", "P24", "b7"])
-      expect(p.match(`${w}.ab1`)?.well.value).toBe(w);
+      expect(p.match(`${w}.ab1`)?.well?.value).toBe(w);
     for (const w of ["Q1", "A0", "A25", "A001", "P1a", "AA1"])
       expect(p.match(`${w}.ab1`)).toBeUndefined();
   });
@@ -192,7 +192,7 @@ describe("tokens inside an optional section", () => {
     const p = PathPattern.parse("{{Plate}}/{{Well}}_IgG[_{{:Primer}}].ab1");
     expect(p.match("P1/A1_IgG_ACGTACG.ab1")?.tags?.["Primer"]?.value).toBe("ACGTACG");
     const bare = p.match("P1/A1_IgG.ab1");
-    expect(bare?.well.value).toBe("A1");
+    expect(bare?.well?.value).toBe("A1");
     expect(bare?.tags?.["Primer"]).toBeUndefined();
   });
 
@@ -213,6 +213,13 @@ describe("tokens inside an optional section", () => {
   test("a well cannot be optional, and tokens do not mix with alternatives", () => {
     expect(() => PathPattern.parse("{{Plate}}[_{{Well}}].ab1")).toThrow(/every file needs a well/);
     expect(() => PathPattern.parse("{{Well}}[_{{Chain}}|_x].ab1")).toThrow(/alternatives/);
+  });
+
+  test("a name only inside [ ] cannot be the identity", () => {
+    // Records that miss the optional part would have no identity and merge into one
+    // clone. A name outside [ ] is fine.
+    expect(() => PathPattern.parse("{{:Run}}[_{{Name}}]")).toThrow(/outside \[ \]|identify/i);
+    expect(() => PathPattern.parse("{{Name}}[_{{Chain}}]")).not.toThrow();
   });
 });
 
@@ -310,7 +317,7 @@ describe("where optional sections sit", () => {
   test("a section does not shift the groups of the tokens inside it", () => {
     const p = PathPattern.parse("[x_]{{Well}}[_{{Direction}}].ab1");
     const m = p.match("x_A1_R.ab1");
-    expect(m?.well.value).toBe("A1");
+    expect(m?.well?.value).toBe("A1");
     expect(m?.direction?.value).toBe("R");
   });
 });
@@ -335,5 +342,34 @@ describe("readEnd", () => {
 
   test("anything else names neither", () => {
     expect(readEnd("inner")).toBeUndefined();
+  });
+
+  test("a header pattern binds a name and needs no well", () => {
+    const p = PathPattern.parse("{{Name}}_{{Chain}}");
+    expect(p.hasName).toBe(true);
+    expect(p.hasWell).toBe(false);
+    const m = p.match("Clone-07_HC");
+    expect(m?.name?.value).toBe("Clone-07");
+    expect(m?.chain?.value).toBe("HC");
+    expect(m?.well).toBeUndefined();
+  });
+
+  test("a name-only pattern matches a bare header", () => {
+    const p = PathPattern.parse("{{Name}}");
+    expect(p.match("lib7_A01")?.name?.value).toBe("lib7_A01");
+  });
+
+  test("the name is highlighted like any other field", () => {
+    const p = PathPattern.parse("{{Name}}_{{Chain}}");
+    const m = p.match("VH1_HC")!;
+    expect(highlightMatch("VH1_HC", m, { name: { begin: "<n>", end: "</n>" } })).toBe(
+      "<n>VH1</n>_HC",
+    );
+  });
+
+  test("a pattern with neither well nor name is refused", () => {
+    expect(() => PathPattern.parse("{{Plate}}_{{Chain}}")).toThrow(
+      /Well.*or.*Name|Name.*or.*Well/i,
+    );
   });
 });

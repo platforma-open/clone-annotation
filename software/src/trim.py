@@ -36,7 +36,7 @@ def trim(nucleotide, best):
     returned unchanged when there is no numbering to cut by, or the cut would be empty."""
     if best is None or not nucleotide:
         return nucleotide
-    _bucket, frame, (_labels, residues, _score, start), _ = best
+    _bucket, frame, (_labels, residues, _score, start, _chain_type), _ = best
     strand = nucleotide if frame < 3 else reverse_complement(nucleotide)
     first, last = domain_nt_span(frame, start, residues)
     first = max(0, first - MARGIN_NT)

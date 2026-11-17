@@ -33,6 +33,7 @@ const HINT = { choices: "_LC|_KC", def: "_{{Direction=F}}" };
 const ROLES: { role: Role; label: string }[] = [
   { role: "plate", label: "Plate" },
   { role: "well", label: "Well" },
+  { role: "name", label: "Name" },
   { role: "chain", label: "Chain" },
   { role: "direction", label: "Direction" },
   { role: "tag", label: "Tag" },
@@ -150,6 +151,7 @@ watch(
 );
 
 const hasWell = computed(() => pieces.value.some((p) => p.role === "well"));
+const hasName = computed(() => pieces.value.some((p) => p.role === "name"));
 
 function pick(role: Role) {
   if (selected.value === undefined) return;
@@ -259,8 +261,13 @@ function pieceTitle(p: Piece): string | undefined {
   <div v-if="file" :class="$style.builder" data-testid="pattern-builder">
     <div :class="$style.header">
       <span :class="$style.title">
-        Click file name parts and assign plate, well, chain or direction fields.
-        <button v-if="inSync && !hasWell" type="button" :class="$style.link" @click="findWell">
+        Click the parts and assign plate, well, name, chain or direction fields.
+        <button
+          v-if="inSync && !hasWell && !hasName"
+          type="button"
+          :class="$style.link"
+          @click="findWell"
+        >
           Find the well
         </button>
       </span>
@@ -284,7 +291,7 @@ function pieceTitle(p: Piece): string | undefined {
       </span>
     </div>
 
-    <div :class="$style.name">
+    <div :class="$style.filename">
       <button
         v-if="segments < fullSegments"
         type="button"
@@ -416,7 +423,7 @@ function pieceTitle(p: Piece): string | undefined {
   color: var(--txt-03);
 }
 
-.name {
+.filename {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -540,6 +547,10 @@ function pieceTitle(p: Piece): string | undefined {
 
 .well {
   background-color: #d0f0c0;
+}
+
+.name {
+  background-color: #cfe3ff;
 }
 
 .chain {

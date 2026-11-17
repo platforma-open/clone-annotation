@@ -151,6 +151,23 @@ describe("checkSelection", () => {
     ]);
   });
 
+  test("a name set with distinct names gives no same-identity warning", () => {
+    expect(
+      check("{{Name}}_{{Chain}}", [
+        "AB101-0001_HC",
+        "AB101-0001_lambda",
+        "AB202-0093_HC",
+        "AB202-0093_lambda",
+      ]),
+    ).toEqual([]);
+  });
+
+  test("all records on one name is reported as a name, not a well", () => {
+    expect(check("{{Name}}_{{Chain}}", ["AB101_HC", "AB101_lambda"])).toEqual([
+      "All 2 records read the same name, AB101.",
+    ]);
+  });
+
   test("every file on its own plate", () => {
     expect(check("{{Plate}}_{{Well}}.ab1", ["R101_A1.ab1", "R102_A2.ab1"])).toEqual([
       "Every file has its own plate. The plate may be reading a part that changes per file.",

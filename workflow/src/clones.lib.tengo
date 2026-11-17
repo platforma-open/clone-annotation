@@ -1,10 +1,23 @@
 text := import("text")
 
-// A clone is one well of one plate: the same well number recurs on every plate,
-// so neither alone identifies it.
-// Must match the UI's key exactly, since properties arrive keyed by it.
-cloneKey := func(plate, well) {
-	return plate + "\u0000" + well
+// The fields that identify a clone, in order. Plate and well is the trace case:
+// the same well number recurs on every plate, so neither alone identifies it.
+DEFAULT_IDENTITY := ["plate", "well"]
+
+// Builds a clone key from the declared identity fields, in order. The values
+// arrive already normalised from the model (a well as A1, not A01), so this
+// joins them and does not normalise again. Must match the UI's key exactly,
+// since properties arrive keyed by it.
+cloneKey := func(fields, identity) {
+	parts := []
+	for name in identity {
+		v := fields[name]
+		if is_undefined(v) {
+			v = ""
+		}
+		parts = append(parts, v)
+	}
+	return text.join(parts, "\u0000")
 }
 
 // Groups traces into the clones they came from, in first-seen order.
@@ -12,7 +25,8 @@ cloneKey := func(plate, well) {
 // `traces` carry the `fields` the model matched out of each path: plate, well,
 // chain and direction, each "" where the pattern has none. A trace with no
 // `fields` did not match and contributes no clone — it is reported separately.
-group := func(traces) {
+group := func(traces, ...opts) {
+	identity := len(opts) > 0 ? opts[0] : DEFAULT_IDENTITY
 	if is_undefined(traces) || len(traces) == 0 {
 		return []
 	}
@@ -26,11 +40,13 @@ group := func(traces) {
 			continue
 		}
 
-		key := cloneKey(f.plate, f.well)
+		key := cloneKey(f, identity)
 
 		clone := byKey[key]
 		if is_undefined(clone) {
-			clone = { plate: f.plate, well: f.well, chains: {}, fileCount: 0 }
+			// `key` travels with the clone so attach matches properties on it
+			// whatever the identity fields are.
+			clone = { plate: f.plate, well: f.well, chains: {}, fileCount: 0, key: key }
 			byKey[key] = clone
 			order = append(order, key)
 		}
@@ -92,8 +108,8 @@ attach := func(clones, properties) {
 	clonesWithout := []
 	reached := {}
 	for c in clones {
-		// The model hands every well over normalised, as the sheet's are.
-		key := cloneKey(c.plate, c.well)
+		// The key group stamped on the clone. Properties arrive keyed the same way.
+		key := c.key
 		got := false
 		for p in properties {
 			v := p.values[key]
@@ -121,7 +137,7 @@ attach := func(clones, properties) {
 			if is_undefined(reached[key]) && is_undefined(seen[key]) {
 				seen[key] = true
 				parts := text.split(key, "\u0000")
-				valuesWithoutClone = append(valuesWithoutClone, text.trim_space(parts[0] + " " + parts[1]))
+				valuesWithoutClone = append(valuesWithoutClone, text.trim_space(text.join(parts, " ")))
 			}
 		}
 	}
@@ -154,7 +170,8 @@ readEnd := func(direction) {
 // the files under. A second trace claiming an end another already holds is
 // counted rather than used, because nothing here can say which of the two the
 // scientist meant.
-sequences := func(traces) {
+sequences := func(traces, ...opts) {
+	identity := len(opts) > 0 ? opts[0] : DEFAULT_IDENTITY
 	if is_undefined(traces) || len(traces) == 0 {
 		return []
 	}
@@ -168,22 +185,22 @@ sequences := func(traces) {
 			continue
 		}
 
-		plate := f.plate
-		well := f.well
 		chain := f.chain
-		key := plate + "\u0000" + well + "\u0000" + chain
+		// The pair key is the clone key: the chains of a clone share one identity
+		// and differ only in chain, so dropping chain pairs them.
+		pairKey := cloneKey(f, identity)
+		key := pairKey + "\u0000" + chain
 
 		mol := byKey[key]
 		if is_undefined(mol) {
 			mol = {
-				plate: plate,
-				well: well,
+				plate: f.plate,
+				well: f.well,
 				chain: chain,
 				extra: 0,
-				// The two chains of a clone share a plate and a well. A set filed
-				// one directory per chain pairs once the pattern reads the real
-				// plate out of the folder, with an optional `[_a|_b]` section.
-				pairKey: plate + "\u0000" + well
+				pairKey: pairKey,
+				// Which record of its file this molecule reads. 0 for a per-file set.
+				recordIndex: is_undefined(t.recordIndex) ? 0 : t.recordIndex
 			}
 			byKey[key] = mol
 			order = append(order, key)

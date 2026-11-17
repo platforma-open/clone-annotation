@@ -27,10 +27,11 @@ SHOWN := {
 	light_chain: true, light_vGene: true, light_cGene: true, light_aa_CDR3: true
 }
 
-// A number can be summarised four ways and nothing in the data says which one
-// fits. All four are carried, and the scientist turns on the one that fits.
-SUMMARIES := ["min", "median", "max", "mean"]
-SUMMARY_LABEL := { min: "Min", median: "Median", max: "Max", mean: "Mean" }
+// A number is reduced to the mean of its wells for the default column. The
+// other summaries stay available as optional columns, so the scientist can
+// swap to one that fits (R14).
+SUMMARIES := ["min", "median", "max"]
+SUMMARY_LABEL := { min: "Min", median: "Median", max: "Max" }
 
 // The key is a hash. The Clone Id column is what a reader goes by.
 axisSpec := {
@@ -44,12 +45,10 @@ axisSpec := {
 
 priority := func(column) {
 	order := {
-		cloneId: 1010, wells: 1000, pairStatus: 980, qcVerdict: 970, qcReason: 960,
+		cloneId: 1010, wellCount: 1000, wells: 999, pairStatus: 980, qcVerdict: 970, qcReason: 960,
 		heavy_chain: 910, heavy_vGene: 900, heavy_cGene: 896, heavy_isotype: 894,
 		heavy_aa_CDR3: 880,
-		light_chain: 875, light_vGene: 870, light_cGene: 866, light_aa_CDR3: 850,
-		// Last of all, after the property columns.
-		wellCount: 1
+		light_chain: 875, light_vGene: 870, light_cGene: 866, light_aa_CDR3: 850
 	}
 	if !is_undefined(order[column]) {
 		return order[column]
@@ -78,30 +77,44 @@ col := func(column, valueType, label, shown) {
 }
 
 // `sides` lists the sides the set has sequences for. Undefined means both.
-settings := func(properties, sides) {
+settings := func(properties, sides, ...opts) {
 	if is_undefined(sides) {
 		sides = SIDES
 	}
+	// A name-keyed set lists the record headers (sequence ids), not wells (option B).
+	nameId := len(opts) > 0 ? opts[0] : false
+	// An amino-acid set has no nucleotide and no MiXCR germline, so the gene,
+	// isotype and nt columns are left out.
+	aminoAcid := len(opts) > 1 ? opts[1] : false
+	wellsLabel := nameId ? "Sequence IDs" : "Wells"
+	wellCountLabel := nameId ? "Number of Sequences" : "Number of Wells"
+	perWell := nameId ? " (per Sequence)" : " (per Well)"
 
 	columns := [
 		col("cloneId", "String", "Clone Id", true),
-		col("wells", "String", "Wells", true),
-		col("wellCount", "Long", "Number of Wells", false),
+		// The well count shows by default; the full list of wells (which can be
+		// long) is an optional column, so the list is kept but not in the way.
+		col("wellCount", "Long", wellCountLabel, true),
+		col("wells", "String", wellsLabel, false),
 		col("pairStatus", "String", "Pairing", false),
 		col("qcVerdict", "String", "QC Verdict", false),
 		col("qcReason", "String", "QC Reason", false)
 	]
 
+	isGene := { vGene: true, dGene: true, jGene: true, cGene: true }
 	for side in sides {
 		title := side == "heavy" ? "Heavy" : "Light"
 		for f in PER_SIDE {
+			if aminoAcid && isGene[f] == true {
+				continue
+			}
 			name := side + "_" + f
 			columns = append(columns,
 				col(name, TYPES[f], title + " " + LABELS[f], SHOWN[name] == true))
 		}
 		// Isotype is a heavy-chain property (IgG/IgM/...); a light chain has none, its
 		// class being its C gene (kappa/lambda). So it is a heavy-only column.
-		if side == "heavy" {
+		if side == "heavy" && !aminoAcid {
 			columns = append(columns,
 				col("heavy_isotype", "String", "Heavy Isotype", SHOWN["heavy_isotype"] == true))
 		}
@@ -110,24 +123,33 @@ settings := func(properties, sides) {
 			columns = append(columns,
 				col(name, "String", title + " " + f + " aa", SHOWN[name] == true))
 		}
-		for f in FEATURES {
-			columns = append(columns,
-				col(side + "_nt_" + f, "String", title + " " + f + " nt", false))
+		if !aminoAcid {
+			for f in FEATURES {
+				columns = append(columns,
+					col(side + "_nt_" + f, "String", title + " " + f + " nt", false))
+			}
 		}
 	}
 
 	if !is_undefined(properties) {
 		for i, p in properties {
 			base := "prop_" + string(i)
-			// Every well's value, kept as it stands, beside the summary. R13
-			// asks for both, so neither has to be reconstructed from the other.
+			numeric := p.type != "String"
+			// The one column shown by default: a single typed value per property.
+			// A number is the mean of its wells; a label is the agreed value.
 			columns = append(columns,
-				col(base + "_values", "String", p.name + " (per Well)", true))
+				col(base + "_value", numeric ? "Double" : "String", p.name, true))
+			// Off by default, but carried so nothing is lost (R13): the wells' own
+			// values, whether they disagree (R15), and the other summaries (R14).
 			columns = append(columns,
-				col(base + "_disagrees", "String", p.name + " Disagrees", true))
-			for s in SUMMARIES {
-				columns = append(columns,
-					col(base + "_" + s, "Double", p.name + " " + SUMMARY_LABEL[s], false))
+				col(base + "_values", "String", p.name + perWell, false))
+			columns = append(columns,
+				col(base + "_disagrees", "String", p.name + " Disagrees", false))
+			if numeric {
+				for s in SUMMARIES {
+					columns = append(columns,
+						col(base + "_" + s, "Double", p.name + " " + SUMMARY_LABEL[s], false))
+				}
 			}
 		}
 	}

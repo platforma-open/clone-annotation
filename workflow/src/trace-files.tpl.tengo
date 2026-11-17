@@ -38,7 +38,18 @@ self.body(func(inputs) {
 			continue
 		}
 		side := sideOf[fields[1]]
-		blob := blobs[idOf[text.trim_space(fields[2])]]
+		// A per-file read is keyed by its path. A combined file's read is keyed
+		// "path#index", but the staged blob is the whole file, so the suffix is
+		// dropped to find it.
+		raw := text.trim_space(fields[2])
+		fileId := idOf[raw]
+		if is_undefined(fileId) {
+			cut := text.last_index(raw, "#")
+			if cut >= 0 {
+				fileId = idOf[raw[:cut]]
+			}
+		}
+		blob := is_undefined(fileId) ? undefined : blobs[fileId]
 		if is_undefined(side) || is_undefined(blob) {
 			continue
 		}

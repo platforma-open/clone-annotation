@@ -27,8 +27,13 @@ import {
 export type { AxisId, ImportFileHandle, PlSelectionModel, PTableKey };
 export { createPlSelectionModel, getFilePathFromHandle };
 export * from "./path_pattern";
-export type { Property, PropertyType } from "@platforma-open/milaboratories.clone-annotation.kind";
-import { normalizeWell, PathPattern, readEnd } from "./path_pattern";
+export type {
+  InputForm,
+  Property,
+  PropertyType,
+} from "@platforma-open/milaboratories.clone-annotation.kind";
+import type { PathPatternMatch } from "./path_pattern";
+import { normalizeWell, PathPattern, propertyKey, readEnd } from "./path_pattern";
 
 /** One well of one plate, with how many files back each chain. */
 export type Clone = {
@@ -36,6 +41,8 @@ export type Clone = {
   well: string;
   chains: Record<string, number>;
   fileCount: number;
+  /** The clone's identity key: the declared identity fields joined. Properties are matched on it. */
+  key?: string;
   /** Values the sheet carried for this well, under the names it used. Absent until a sheet reaches it. */
   properties?: Record<string, string>;
 };
@@ -62,6 +69,18 @@ export const EXPORT_WELLS_OPTIONS = [
   { label: "All wells", value: "all" },
 ] as const;
 
+export const INPUT_FORM_OPTIONS = [
+  { label: "Sanger trace (.ab1, .scf)", value: "trace" },
+  { label: "FASTA, nucleotide", value: "fastaNt" },
+  { label: "FASTA, amino acid", value: "fastaAa" },
+  { label: "FASTQ, nucleotide", value: "fastqNt" },
+] as const;
+
+export const FILE_SHAPE_OPTIONS = [
+  { label: "Many files, one record each", value: "perFile" },
+  { label: "One file, many records", value: "combined" },
+] as const;
+
 export const SPECIES_OPTIONS = [
   { label: "Alpaca (Vicugna pacos)", value: "alpaca" },
   { label: "Atlantic salmon (Salmo salar)", value: "salmon" },
@@ -79,16 +98,16 @@ export const SPECIES_OPTIONS = [
   { label: "Sheep (Ovis aries)", value: "sheep" },
 ] as const;
 
-/** What Tracy made of one trace file. */
+/** What the reader made of one input file. */
 export type TraceRead = {
   /** The path the pattern matched against, which is what the files table shows. */
   path: string;
-  /** Bases Tracy called, before the quality floor. */
+  /** Bases called, before the quality floor. */
   length: number;
   /** The stretch Mott trimming keeps at the floor. What carries on downstream. */
   usableLength: number;
-  /** Mean Phred over that stretch. */
-  meanQuality: number;
+  /** Mean Phred over that stretch. Absent where the form carried no quality. */
+  meanQuality?: number;
   kept: boolean;
 };
 
@@ -263,11 +282,27 @@ export type QcTab = "plateMap" | "metrics";
 /** The two read quality charts, one per tab. */
 export type ReadsTab = "quality" | "length";
 
+/** A single record of a combined FASTA, as the backend extracted its header. */
+export type FastaHeader = {
+  /** The combined file the record sits in. */
+  file: ImportFileHandle;
+  /** The record's position in the file, zero-based. */
+  index: number;
+  /** The record id: the first whitespace-separated token of the header, with no
+   * leading `>`. Anything after the first space is dropped. */
+  header: string;
+};
+
 export type BlockData = BlockParams & {
   /** What the scientist calls this set. */
   name: string;
   /** Every trace the scientist selected, before the name pattern is applied. */
   traceFiles: ImportFileHandle[];
+  /** Whether the set is many one-record files or one file of many records. */
+  fileShape?: "perFile" | "combined";
+  /** Records of the combined file(s), read once by the backend. The clone key is
+   * matched from each header, so the UI never reads the files itself. */
+  fastaHeaders?: FastaHeader[];
   /** Set once the picker has been offered, so it is not reopened on every visit. */
   suggestedImport?: boolean;
   /** A sheet of measurements, one row per well. Parsed in the UI, as samples-and-data does. */
@@ -346,20 +381,98 @@ function parsePattern(pattern: string | undefined): PathPattern | undefined {
  * two copies of a field are not something a regex says, and the workflow's regexp
  * panics on a group an absent `[ ]` section left out.
  */
-function tracesWithFields(data: BlockData, pattern: PathPattern | undefined) {
+function fieldsFromMatch(m: PathPatternMatch, tagNames: string[]) {
+  return {
+    plate: m.plate?.value ?? "",
+    // Option A: a header name has no well, so the name rides the well slot and the
+    // whole plate/well pipeline works unchanged. It shows as "Well" until B
+    // relabels it. A real well is used as it stands.
+    well: m.well ? normalizeWell(m.well.value) : (m.name?.value ?? ""),
+    name: m.name?.value ?? "",
+    chain: m.chain?.value ?? "",
+    // forward or reverse; a value neither end claims goes on as written.
+    direction: m.direction ? (readEnd(m.direction.value) ?? m.direction.value) : "",
+    // Tags are carried through as annotation, keyed under their declared names.
+    tags: Object.fromEntries(tagNames.map((t) => [t, m.tags?.[t]?.value ?? ""])),
+  };
+}
+
+type TraceWithFields = {
+  handle: ImportFileHandle;
+  path: string;
+  recordIndex?: number;
+  fields: ReturnType<typeof fieldsFromMatch> | undefined;
+};
+
+/** The last segment of a path: the file's own name. */
+export function basename(path: string): string {
+  const segs = path.split(/[\\/]/).filter((s) => s !== "");
+  return segs[segs.length - 1] ?? path;
+}
+
+/** The file's own name, which groups a combined set's records when the header
+ * gives no plate. */
+function fileLabel(handle: ImportFileHandle): string {
+  return basename(getFilePathFromHandle(handle));
+}
+
+/**
+ * A label that singles each file out, for grouping a combined set's records by
+ * their file. The basename reads well and is used where it is unique; two files
+ * sharing a basename fall back to their full path, so records are never merged
+ * across different files.
+ */
+function fileGroupLabels(handles: ImportFileHandle[]): Map<ImportFileHandle, string> {
+  const distinct = [...new Set(handles)];
+  const baseCount = new Map<string, number>();
+  for (const h of distinct) baseCount.set(fileLabel(h), (baseCount.get(fileLabel(h)) ?? 0) + 1);
+  const labels = new Map<ImportFileHandle, string>();
+  for (const h of distinct) {
+    const base = fileLabel(h);
+    labels.set(h, (baseCount.get(base) ?? 0) > 1 ? getFilePathFromHandle(h) : base);
+  }
+  return labels;
+}
+
+function tracesWithFields(data: BlockData, pattern: PathPattern | undefined): TraceWithFields[] {
+  const tagNames = pattern?.tags ?? [];
+  // Combined file: one trace per record, identity matched from the record header
+  // the backend extracted. The UI never reads the files.
+  if ((data.fileShape ?? "perFile") === "combined") {
+    // With no plate token the records group by their source file, so the QC
+    // summary has one row per file rather than one "No plate" row.
+    const groupByFile = !pattern?.hasPlate;
+    const fileLabels = fileGroupLabels((data.fastaHeaders ?? []).map((rec) => rec.file));
+    return (data.fastaHeaders ?? []).map((rec) => {
+      const m = pattern?.match(rec.header);
+      const fields = m ? fieldsFromMatch(m, tagNames) : undefined;
+      if (fields && groupByFile) fields.plate = fileLabels.get(rec.file) ?? fileLabel(rec.file);
+      return {
+        handle: rec.file,
+        // The file, shared by all its records; the record's identity is in fields.
+        path: getFilePathFromHandle(rec.file),
+        recordIndex: rec.index,
+        fields,
+      };
+    });
+  }
+  // Per-file: one trace per file, identity from the path.
   const segments = pattern?.segmentCount ?? 1;
   return (data.traceFiles ?? []).map((handle) => {
     const path = pathTail(getFilePathFromHandle(handle), segments);
     const m = pattern?.match(path);
-    const fields = m && {
-      plate: m.plate?.value ?? "",
-      well: normalizeWell(m.well.value),
-      chain: m.chain?.value ?? "",
-      // forward or reverse; a value neither end claims goes on as written.
-      direction: m.direction ? (readEnd(m.direction.value) ?? m.direction.value) : "",
-    };
-    return { handle, path, fields };
+    return { handle, path, fields: m ? fieldsFromMatch(m, tagNames) : undefined };
   });
+}
+
+/**
+ * The identity fields that make the clone key, in order. A header name rides the
+ * well slot (option A, see `fieldsFromMatch`). The plate joins the key only when
+ * the files carry a real plate, so the key matches `propertyKey`: a set with no
+ * plate (a name set, or a plateless well set) keys on the id alone.
+ */
+function identityFields(pattern: PathPattern | undefined): string[] {
+  return pattern?.hasPlate ? ["plate", "well"] : ["well"];
 }
 
 function declaredFields(pattern: PathPattern | undefined) {
@@ -370,6 +483,31 @@ function declaredFields(pattern: PathPattern | undefined) {
       direction: pattern.hasDirection,
     }
   );
+}
+
+/**
+ * Each pattern tag as a property: the value the file name carried, keyed on the
+ * same key the sheet uses. Carried as annotation only; it does not identify the
+ * clone (that is the identity picker's job, later). Kept apart from the sheet
+ * properties so the sheet-join QC still reflects the sheet alone.
+ */
+function tagProperties(
+  traces: ReturnType<typeof tracesWithFields>,
+  pattern: PathPattern | undefined,
+): Property[] {
+  const names = pattern?.tags ?? [];
+  // The same key the sheet and the Files-table preview use, via one definition.
+  const identityIsName = pattern?.identityIsName ?? false;
+  const plateInKey = pattern?.hasPlate ?? false;
+  return names.map((name) => {
+    const values: Record<string, string> = {};
+    for (const t of traces) {
+      const v = t.fields ? t.fields.tags[name] : undefined;
+      if (v === undefined || v === "" || !t.fields) continue;
+      values[propertyKey(t.fields.plate, t.fields.well, identityIsName, plateInKey)] = v;
+    }
+    return { name, type: "String", values };
+  });
 }
 
 /** The field exists only once the block has run on a set that holds files. */
@@ -383,6 +521,12 @@ const dataModel = new DataModelBuilder({ kind })
   .migrate<BlockData>("v2", (prev) => ({
     ...prev,
     plateMapGraph: { ...prev.plateMapGraph, title: "" },
+  }))
+  // v2 -> v3: multi-format support. Every existing set is a trace set, so the
+  // reader is fixed to "trace" and the whole flow reads exactly as before.
+  .migrate<BlockData>("v3", (prev) => ({
+    ...prev,
+    form: prev.form ?? "trace",
   }))
   .init(({ params }) => ({
     name: DEFAULT_NAME,
@@ -412,6 +556,7 @@ const dataModel = new DataModelBuilder({ kind })
         axisY: { titleMode: "hidden" },
       },
     },
+    form: "trace",
     qualityThreshold: DEFAULT_QUALITY_THRESHOLD,
     numberingScheme: "imgt",
     species: "hsa",
@@ -446,14 +591,32 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
 
   // Each trace arrives with the path the pattern is matched against, computed
   // here so the path rule exists once rather than in both TypeScript and Tengo.
-  .prerunArgs((data) => ({ propertyFile: data.propertyFile }))
+  .prerunArgs((data) => ({
+    propertyFile: data.propertyFile,
+    fileShape: data.fileShape,
+    // The header extractor reads @-lines for FASTQ, >-lines otherwise.
+    form: data.form ?? "trace",
+    // Only the combined shape needs its files in prerun (to read headers). The
+    // per-file shape keeps its many files in the main run.
+    traceFiles: (data.fileShape ?? "perFile") === "combined" ? (data.traceFiles ?? []) : [],
+  }))
 
   .args((data) => {
     const pattern = parsePattern(data.namePattern);
+    const traces = tracesWithFields(data, pattern);
+    const identity = identityFields(pattern);
     return {
       name: data.name,
-      traces: tracesWithFields(data, pattern),
+      form: data.form ?? "trace",
+      fileShape: data.fileShape ?? "perFile",
+      identity,
+      // The identity is a name (not a well) when the pattern declares a name and
+      // no well. The tables then label it "Name" instead of "Well" (option B).
+      identityIsName: pattern?.identityIsName ?? false,
+      traces,
       properties: data.properties,
+      // Tags from the name pattern, carried as annotation beside the sheet's.
+      tagProperties: tagProperties(traces, pattern),
       namePattern: data.namePattern,
       declaredFields: declaredFields(pattern),
       qualityThreshold: data.qualityThreshold,
@@ -502,6 +665,14 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     ctx.prerun
       ?.resolve({ field: "propertyFile", assertFieldType: "Input", allowPermanentAbsence: true })
       ?.getFileHandle(),
+  )
+
+  // The record headers of a combined FASTA, one list per file, extracted cheaply
+  // in prerun. The UI matches them with the pattern; it never reads the files.
+  .output("fastaFileHeaders", (ctx) =>
+    ctx.prerun
+      ?.resolve({ field: "fastaFileHeaders", allowPermanentAbsence: true })
+      ?.getDataAsJsonOrUndefined<string[][]>(),
   )
 
   .output("isRunning", (ctx) => ctx.outputs?.getIsReadyOrError() === false)
@@ -672,6 +843,10 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   // it went out with. Deliberately without `traceFiles`: handles belong to the
   // machine that uploaded them.
   .templateParams((data) => ({
+    form: data.form,
+    // Combined or per-file: without it a combined set returns as per-file, matching
+    // the header pattern against file paths.
+    fileShape: data.fileShape,
     namePattern: data.namePattern,
     qualityThreshold: data.qualityThreshold,
     numberingScheme: data.numberingScheme,
@@ -684,13 +859,25 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   .subtitle((ctx) => ctx.data.name.trim() || DEFAULT_NAME)
 
   // Always offered, so a block that has not run yet shows where the results
-  // will appear rather than hiding it.
-  .sections(() => [
-    { type: "link" as const, href: "/" as const, label: "Files" },
-    { type: "link" as const, href: "/qc" as const, label: "Plate View" },
-    { type: "link" as const, href: "/read-quality" as const, label: "Read Quality" },
-    { type: "link" as const, href: "/results" as const, label: "Results" },
-  ])
+  // will appear rather than hiding it. Read Quality charts Phred per read, so it
+  // is dropped for a form that carries no quality.
+  .sections((ctx) => {
+    const pattern = parsePattern(ctx.data.namePattern);
+    const nameId = pattern?.identityIsName ?? false;
+    const sections: Array<{ type: "link"; href: `/${string}`; label: string }> = [
+      { type: "link", href: "/", label: "Files" },
+      { type: "link", href: "/qc", label: nameId ? "Sequence QC" : "Plate View" },
+    ];
+    // Read Quality charts Phred per read. A trace and a FASTQ carry it; both FASTA
+    // forms are letters only. An absent form reads as trace, the same fallback the
+    // workflow uses, so the page does not vanish while the block runs as a trace set.
+    const form = ctx.data.form ?? "trace";
+    if (form === "trace" || form === "fastqNt") {
+      sections.push({ type: "link", href: "/read-quality", label: "Read Quality" });
+    }
+    sections.push({ type: "link", href: "/results", label: "Results" });
+    return sections;
+  })
   .done();
 
 export type BlockOutputs = InferOutputsType<typeof platforma>;

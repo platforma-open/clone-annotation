@@ -38,23 +38,23 @@ self.body(func(inputs) {
 	toPool := pframes.pFrameBuilder()
 	for id, column in xsv.importFile(
 		inputs.clones, "tsv",
-		exportSpecs.variantSettings(params.blockId, params.properties, params.scheme, sides),
+		exportSpecs.variantSettings(params.blockId, params.properties, params.scheme, sides, params.identityIsName, params.aminoAcid),
 		{ splitDataAndSpec: true }
 	) {
 		toPool.add("variant." + id, trace.inject(column.spec), column.data)
 	}
 	for id, column in xsv.importFile(
 		inputs.abundance, "tsv",
-		exportSpecs.abundanceSettings(params.blockId),
+		exportSpecs.abundanceSettings(params.blockId, params.identityIsName, params.aminoAcid),
 		{ splitDataAndSpec: true }
 	) {
 		toPool.add("abundance." + id, trace.inject(column.spec), column.data)
 	}
 
 	return {
-		pairsTable: importFrame(inputs.pairs, pairCols.settings(sides)),
-		clonesTable: importFrame(inputs.clones, cloneCols.settings(params.properties, sides)),
-		plateSummaryTable: importFrame(inputs.plates, plateCols.settings(sides)),
+		pairsTable: importFrame(inputs.pairs, pairCols.settings(sides, params.aminoAcid)),
+		clonesTable: importFrame(inputs.clones, cloneCols.settings(params.properties, sides, params.identityIsName, params.aminoAcid)),
+		plateSummaryTable: importFrame(inputs.plates, plateCols.settings(sides, params.identityIsName)),
 		plateMap: importFrame(inputs.wells, wellCols.settings(params.properties, sides)),
 		variants: toPool.build()
 	}

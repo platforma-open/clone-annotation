@@ -6,6 +6,7 @@ import {
   buildProperties,
   cloneKey,
   duplicateKeyCount,
+  guessIdentityColumn,
   guessPlateColumn,
   guessType,
   guessWellColumn,
@@ -87,26 +88,102 @@ describe("buildProperties", () => {
     wellColumn: "well",
     propertyColumns: ["elisa"],
     types: { elisa: "Double" as const },
+    plateInKey: true,
   };
 
   test("keys values on plate and well together", () => {
     const [p] = buildProperties(sheet, mapping);
-    expect(p?.values[cloneKey("Plate1", "A1")]).toBe("2.538");
-    expect(p?.values[cloneKey("Plate2", "A1")]).toBe("0.081");
+    expect(p?.values[cloneKey("Plate1", "A1", false, true)]).toBe("2.538");
+    expect(p?.values[cloneKey("Plate2", "A1", false, true)]).toBe("0.081");
   });
 
   test("a row with no value contributes nothing", () => {
     const [p] = buildProperties(sheet, mapping);
-    expect(cloneKey("Plate1", "A2") in (p?.values ?? {})).toBe(false);
+    expect(cloneKey("Plate1", "A2", false, true) in (p?.values ?? {})).toBe(false);
   });
 
   test("the type the scientist chose is carried", () => {
     expect(buildProperties(sheet, mapping)[0]?.type).toBe("Double");
   });
 
-  test("without a plate column every well shares one plate", () => {
-    const [p] = buildProperties(sheet, { ...mapping, plateColumn: undefined });
-    expect(p?.values[cloneKey("", "A1")]).toBe("0.081");
+  test("with no real plate the well alone is the key", () => {
+    const [p] = buildProperties(sheet, { ...mapping, plateColumn: undefined, plateInKey: false });
+    expect(p?.values[cloneKey("", "A1", false, false)]).toBe("0.081");
+  });
+});
+
+describe("buildProperties for a name-keyed set", () => {
+  const sheet: Sheet = {
+    columns: ["clone_id", "elisa"],
+    rows: [
+      { clone_id: "clone_A01", elisa: "2.5" },
+      { clone_id: "clone_B02", elisa: "0.1" },
+    ],
+  };
+  const mapping = {
+    wellColumn: "clone_id",
+    propertyColumns: ["elisa"],
+    types: { elisa: "Double" as const },
+    identityIsName: true,
+    plateInKey: false,
+  };
+
+  test("keys on the id alone: no plate, no well normalisation", () => {
+    const [p] = buildProperties(sheet, mapping);
+    // Matches the software's property_key with no real plate: the id as it stands.
+    expect(p?.values[cloneKey("", "clone_A01", true, false)]).toBe("2.5");
+    expect(p?.values["clone_A01"]).toBe("2.5");
+    // The id is not read as a well, so A01 is never collapsed to A1.
+    expect(p?.values["clone_B02"]).toBe("0.1");
+  });
+});
+
+describe("the Files-table preview key matches buildProperties", () => {
+  // The preview keys each file by its parsed plate/well and the pattern flags;
+  // buildProperties keys the sheet the same way. If the two drift, the preview
+  // shows blanks. Both go through cloneKey, so this pins that contract.
+  test("plate/well set: the file's plate+well finds the sheet value", () => {
+    const sheet: Sheet = {
+      columns: ["plate", "well", "e"],
+      rows: [{ plate: "P1", well: "A1", e: "9" }],
+    };
+    const [p] = buildProperties(sheet, {
+      plateColumn: "plate",
+      wellColumn: "well",
+      propertyColumns: ["e"],
+      types: { e: "Double" },
+      plateInKey: true,
+    });
+    expect(p?.values[cloneKey("P1", "A1", false, true)]).toBe("9");
+  });
+
+  test("name set: the record id alone finds the sheet value", () => {
+    const sheet: Sheet = { columns: ["clone_id", "e"], rows: [{ clone_id: "X1", e: "9" }] };
+    const [p] = buildProperties(sheet, {
+      wellColumn: "clone_id",
+      propertyColumns: ["e"],
+      types: { e: "Double" },
+      identityIsName: true,
+      plateInKey: false,
+    });
+    expect(p?.values[cloneKey("", "X1", true, false)]).toBe("9");
+  });
+});
+
+describe("guessIdentityColumn", () => {
+  test("a header naming an id is taken", () => {
+    const sheet: Sheet = { columns: ["clone_id", "elisa"], rows: [] };
+    expect(guessIdentityColumn(sheet)).toBe("clone_id");
+  });
+
+  test("otherwise the first column is the starting point", () => {
+    const sheet: Sheet = { columns: ["label", "elisa"], rows: [] };
+    expect(guessIdentityColumn(sheet)).toBe("label");
+  });
+
+  test("an id substring like avidity is not mistaken for the id column", () => {
+    const sheet: Sheet = { columns: ["avidity", "clone_id"], rows: [] };
+    expect(guessIdentityColumn(sheet)).toBe("clone_id");
   });
 });
 
@@ -177,6 +254,7 @@ describe("duplicateKeyCount", () => {
     wellColumn: "well",
     propertyColumns: [],
     types: {},
+    plateInKey: true,
   };
 
   test("two rows on one well are a collision", () => {
@@ -201,7 +279,7 @@ describe("duplicateKeyCount", () => {
     expect(duplicateKeyCount(s, mapping)).toBe(0);
   });
 
-  test("without a plate column every well shares one plate", () => {
+  test("with no real plate the same well on another plate collides", () => {
     const s: Sheet = {
       columns: ["plate", "well"],
       rows: [
@@ -209,6 +287,6 @@ describe("duplicateKeyCount", () => {
         { plate: "Plate2", well: "A1" },
       ],
     };
-    expect(duplicateKeyCount(s, { ...mapping, plateColumn: undefined })).toBe(1);
+    expect(duplicateKeyCount(s, { ...mapping, plateColumn: undefined, plateInKey: false })).toBe(1);
   });
 });
