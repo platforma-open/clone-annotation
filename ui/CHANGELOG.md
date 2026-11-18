@@ -1,5 +1,13 @@
 # @platforma-open/milaboratories.clone-annotation.ui
 
+## 1.2.1
+
+### Patch Changes
+
+- 4a19ec9: Support remote file upload
+- Updated dependencies [4a19ec9]
+  - @platforma-open/milaboratories.clone-annotation.model@1.2.1
+
 ## 1.2.0
 
 ### Minor Changes

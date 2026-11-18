@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.clone-annotation.workflow
 
+## 1.2.1
+
+### Patch Changes
+
+- 4a19ec9: Support remote file upload
+
 ## 1.2.0
 
 ### Minor Changes
