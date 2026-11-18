@@ -34,10 +34,16 @@ wf.body(func(args) {
 		if args.form == "fastqNt" {
 			run.arg("--fastq")
 		}
+		// Keep each import handle so the model can drive its upload. On a remote
+		// backend the header read blocks until the bytes reach the server, and the
+		// upload starts only once getImportProgress() subscribes to the handle.
+		fastaImports := {}
 		for i, handle in args.traceFiles {
 			imp := file.importFile(handle)
+			fastaImports[handle] = imp.handle
 			run.addFile("fasta/" + fmt.sprintf("f%05d", i), imp.file)
 		}
+		outputs.fastaFileImports = fastaImports
 		result := run.saveFileContent("headers.json").inMediumQueue().run()
 		outputs.fastaFileHeaders = result.getFileContent("headers.json")
 	}
