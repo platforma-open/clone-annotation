@@ -821,6 +821,47 @@ def test_two_scfv_reads_in_one_well_are_two_pairs():
           (partner["s0H"], partner["s1KL"]), ("P1|A1|H|KL", "P1|A1|L|H"))
 
 
+def test_two_scfv_reads_in_one_well_export_two_pairs_not_four():
+    work = tempfile.mkdtemp()
+    pairs_tsv = os.path.join(work, "pairs.tsv")
+    scfv_run(work, [
+        {"id": "s0", "plate": "P1", "well": "A1", "chain": "H", "source": "merged",
+         "pairKey": "P1|A1"},
+        {"id": "s1", "plate": "P1", "well": "A1", "chain": "L", "source": "merged",
+         "pairKey": "P1|A1"},
+    ], ["--out_pairs_tsv", pairs_tsv])
+    rows = list(csv.DictReader(open(pairs_tsv), delimiter="\t"))
+    check("one pair row per read, no crossed pairs", len(rows), 2)
+
+
+def test_an_scfv_constant_call_goes_to_the_domain_of_its_locus():
+    work = tempfile.mkdtemp()
+    mixcr = os.path.join(work, "alignments.tsv")
+    with open(mixcr, "w") as handle:
+        handle.write("descrsR1\ttopChains\tbestVGene\tbestVHit\n")
+        handle.write("s0::H\tIGH\tIGHV3-23\tIGHV3-23*00\n")
+        handle.write("s0::KL\tIGK\tIGKV1-5\tIGKV1-5*00\n")
+    constant = os.path.join(work, "constant.tsv")
+    with open(constant, "w") as handle:  # the constant align keys the whole read
+        handle.write("descrsR1\tbestCGene\tbestCHit\tisotypePrimary\n")
+        handle.write("s0\tIGHG1\tIGHG1*00\tIgG1\n")
+    ann = scfv_run(work, [
+        {"id": "s0", "plate": "P1", "well": "A1", "chain": "", "source": "merged"},
+    ], ["--mixcr", mixcr, "--constant", constant])["annotations"]
+    by_side = {a["observedChain"]: a for a in ann}
+    check("the heavy domain gets the IGH constant",
+          (by_side["H"].get("cGene"), by_side["H"].get("isotype")), ("IGHG1", "IgG1"))
+    check("the light domain gets no heavy constant", by_side["KL"].get("cGene"), None)
+
+
+def test_an_unlabelled_scfv_run_reports_pairs():
+    work = tempfile.mkdtemp()
+    result = scfv_run(work, [
+        {"id": "s0", "plate": "P1", "well": "A1", "chain": "", "source": "merged"},
+    ])
+    check("the Pairs view is offered", result["paired"], True)
+
+
 def test_the_run_pairing_names_an_scfv_run_construct():
     work = tempfile.mkdtemp()
     out = os.path.join(work, "pairing.json")

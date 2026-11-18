@@ -752,6 +752,16 @@ def read_constant(path):
     return out
 
 
+def constant_side(record):
+    """The side a constant call belongs to, by its C gene's locus, or None."""
+    gene = record.get("cGene", "").upper()
+    if gene.startswith("IGH"):
+        return "heavy"
+    if gene.startswith(("IGK", "IGL")):
+        return "light"
+    return None
+
+
 def translate(nucleotide):
     return "".join(
         CODONS.get(nucleotide[i : i + 3].upper(), "X")
@@ -1094,10 +1104,14 @@ def candidate_pairings(annotations):
     Where a side has more than one candidate the clone is already Ambiguous,
     and each combination is carried rather than one of them chosen. Showing one
     and dropping the rest would hide the very thing the status reports.
+
+    An scFv read's two domains are grouped by the read, not the clone: two scFv
+    reads in one well are two known pairs, and crossing them would invent two more.
     """
     groups = {}
     for entry in annotations:
-        groups.setdefault(entry.get("pairKey", ""), []).append(entry)
+        key = ("read", entry["id"]) if entry.get("construct") else ("clone", entry.get("pairKey", ""))
+        groups.setdefault(key, []).append(entry)
 
     out = []
     for members in groups.values():
@@ -1780,8 +1794,9 @@ def main(argv=None):
             if mixed_all is not None:
                 entry["mixedPositionsDomain"] = mixed_all
 
-    def join_mixcr(entry, chosen, where, source):
-        """One domain's germline track, from the MiXCR alignment filed under `chosen`."""
+    def join_mixcr(entry, chosen, where, source, constant_hit=None):
+        """One domain's germline track, from the MiXCR alignment filed under `chosen`.
+        The constant call is filed under `chosen` too, unless `constant_hit` is given."""
         hit = aligned.get(chosen)
         if hit is not None:
             # MiXCR writes "-" where it found no hit. An absent gene is absent,
@@ -1799,7 +1814,8 @@ def main(argv=None):
             # The C gene, C hit and isotype come from the constant-boundary pass. The
             # domain-trimmed main align has no constant region, so its copies above are
             # empty; this fills them where the read's tail is a real constant.
-            for field, value in constant.get(chosen, {}).items():
+            for field, value in (constant.get(chosen, {}) if constant_hit is None
+                                 else constant_hit).items():
                 entry[field] = value
             # `chains` is MiXCR's locus; it travels under its own entry name.
             if hit.get("chains", "") not in ("", "-"):
@@ -1873,8 +1889,13 @@ def main(argv=None):
                 entry["construct"] = True
                 fill_domain(entry, pick, nucleotide, sequence)
                 # trim wrote each domain as its own record, so MiXCR aligned it
-                # under the read id plus the side.
-                join_mixcr(entry, chosen + SCFV_ID_SEP + pick[0], where, sequence.get("source"))
+                # under the read id plus the side. The constant align ran on the
+                # whole read, so its call is under the read id and belongs only to
+                # the domain whose locus the C gene shares.
+                whole = constant.get(chosen, {})
+                own = whole if constant_side(whole) == SIDES.get(pick[0]) else {}
+                join_mixcr(entry, chosen + SCFV_ID_SEP + pick[0], where,
+                           sequence.get("source"), constant_hit=own)
                 annotations.append(entry)
         else:
             entry = base_entry(sequence)
@@ -1937,7 +1958,8 @@ def main(argv=None):
                 "annotations": annotations,
                 "notNumbered": not_numbered,
                 "notAligned": not_aligned,
-                "paired": pairing_applies(annotations, args.chains_declared),
+                "paired": (pairing_applies(annotations, args.chains_declared)
+                           or any(e.get("construct") for e in annotations)),
                 "sides": sides,
                 "unpaired": unpaired,
                 "chainMismatch": mismatched,
