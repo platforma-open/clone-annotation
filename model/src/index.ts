@@ -77,8 +77,8 @@ export const INPUT_FORM_OPTIONS = [
 ] as const;
 
 export const FILE_SHAPE_OPTIONS = [
-  { label: "Many files, one record each", value: "perFile" },
-  { label: "One file, many records", value: "combined" },
+  { label: "One sequence per file", value: "perFile" },
+  { label: "Multi sequence file", value: "combined" },
 ] as const;
 
 export const SPECIES_OPTIONS = [
@@ -665,6 +665,26 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     ctx.prerun
       ?.resolve({ field: "propertyFile", assertFieldType: "Input", allowPermanentAbsence: true })
       ?.getFileHandle(),
+  )
+
+  // Drives the combined-FASTA upload in prerun. On a remote backend the header
+  // read blocks until the files reach the server, and getImportProgress() with
+  // isActive is what starts each transfer. The progress values are not shown.
+  .output(
+    "fastaFileImports",
+    (ctx) =>
+      Object.fromEntries(
+        ctx.prerun
+          ?.resolve({
+            field: "fastaFileImports",
+            assertFieldType: "Input",
+            allowPermanentAbsence: true,
+          })
+          ?.mapFields((handle, acc) => [handle as ImportFileHandle, acc.getImportProgress()], {
+            skipUnresolved: true,
+          }) ?? [],
+      ),
+    { isActive: true },
   )
 
   // The record headers of a combined FASTA, one list per file, extracted cheaply

@@ -52,7 +52,7 @@ let imported = false;
 const draft = reactive({
   name: app.model.data.name || DEFAULT_NAME,
   form: (app.model.data.form ?? "trace") as InputForm,
-  fileShape: (app.model.data.fileShape ?? "perFile") as "perFile" | "combined",
+  fileShape: app.model.data.fileShape as "perFile" | "combined" | undefined,
   pattern: app.model.data.namePattern ?? "",
   files: [...(app.model.data.traceFiles ?? [])],
   filePickerOpen: true,
@@ -132,6 +132,13 @@ watch(
 const headers = computed(() => (isCombined.value ? (app.model.data.fastaHeaders ?? []) : []));
 const headersReady = computed(() => !isCombined.value || headers.value.length > 0);
 
+// A multi-record form shows nothing and imports nothing until its file format is
+// picked. A trace is always one file per clone, so it needs no pick.
+const formatChosen = computed(
+  () => !isMultiRecordForm(draft.form) || draft.fileShape !== undefined,
+);
+const ready = computed(() => formatChosen.value && headersReady.value);
+
 // For combined, match each record header; otherwise match each file's path.
 const parsed = computed(() =>
   isCombined.value
@@ -152,7 +159,7 @@ const canImport = computed(
   () =>
     draft.name.trim() !== "" &&
     compiled.value.pattern !== undefined &&
-    headersReady.value &&
+    ready.value &&
     matchedCount.value > 0,
 );
 
@@ -203,9 +210,9 @@ function doImport() {
       label="Input type"
     >
       <template #tooltip>
-        What the files hold. The whole set is one form. A Sanger trace is read and merged; a
-        nucleotide FASTA is read as it stands; an amino-acid FASTA is numbered as protein, with no
-        germline; a FASTQ is read and trimmed by its quality.
+        What kind of sequence files you are loading; all of them are read as this one type. A Sanger
+        trace is a chromatogram from Sanger sequencing. FASTA holds plain sequences, nucleotide or
+        amino acid. FASTQ holds reads with a quality score for each base.
       </template>
     </PlDropdown>
 
@@ -214,11 +221,12 @@ function doImport() {
       v-model="draft.fileShape"
       :options="FILE_SHAPE_OPTIONS"
       :required="true"
-      label="File shape"
+      label="File format"
     >
       <template #tooltip>
-        Whether each file holds one record (identity in the file name) or one file holds many
-        records (identity in each record's header).
+        How your sequences are stored. Choose "One sequence per file" when each file holds a single
+        sequence. Choose "Multi sequence file" when one file holds many sequences, each with its own
+        header line.
       </template>
     </PlDropdown>
 
@@ -226,7 +234,7 @@ function doImport() {
 
     <!-- One group, so its parts sit closer than the dialog's own gap between sections. -->
     <div class="pattern">
-      <PatternBuilder v-if="headersReady" v-model="draft.pattern" :files="parsed" />
+      <PatternBuilder v-if="ready" v-model="draft.pattern" :files="parsed" />
 
       <div class="pattern-row">
         <PlTextField
@@ -241,9 +249,9 @@ function doImport() {
 
       <p v-if="isCombined && !headersReady" class="note">Reading record headers…</p>
 
-      <FieldValues v-if="headersReady && matchedCount > 0" :fields="fields" />
+      <FieldValues v-if="ready && matchedCount > 0" :fields="fields" />
 
-      <ul v-if="headersReady && warnings.length" class="warnings" data-testid="pattern-warnings">
+      <ul v-if="ready && warnings.length" class="warnings" data-testid="pattern-warnings">
         <li v-for="w in warnings" :key="w">{{ w }}</li>
       </ul>
     </div>
