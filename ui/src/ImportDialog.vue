@@ -14,6 +14,7 @@ import {
   PlDialogModal,
   PlDropdown,
   PlFileDialog,
+  PlProgressCell,
   PlTextField,
 } from "@platforma-sdk/ui-vue";
 import { computed, reactive, watch } from "vue";
@@ -247,7 +248,10 @@ function doImport() {
         <PatternHelp />
       </div>
 
-      <p v-if="isCombined && !headersReady" class="note">Reading record headers…</p>
+      <!-- PlProgressCell is height:100% with an absolute body, so it needs a sized parent. -->
+      <div v-if="isCombined && !headersReady" class="headers-loader">
+        <PlProgressCell stage="running" step="Reading record headers…" />
+      </div>
 
       <FieldValues v-if="ready && matchedCount > 0" :fields="fields" />
 
@@ -304,9 +308,7 @@ function doImport() {
   color: var(--warn-01, #b36b00);
 }
 
-.note {
-  margin: 0;
-  font-size: 14px;
-  color: var(--txt-03, #6b7280);
+.headers-loader {
+  height: 40px;
 }
 </style>
