@@ -7,14 +7,17 @@
 // the uploaded blobs, not copies.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
 pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
+exportSpecs := import(":export-specs")
 json := import("json")
 text := import("text")
 
-self.defineOutputs("heavy", "light")
+self.defineOutputs("traceFiles")
 
 self.awaitState("traces", "ResourceReady")
 self.awaitState("traceReads", "ResourceReady")
+self.awaitState("pairing", "ResourceReady")
 
 self.body(func(inputs) {
 	// The staged id of each trace, by the path the annotator names it under.
@@ -56,8 +59,18 @@ self.body(func(inputs) {
 		maps[side].add([fields[0]], blob)
 	}
 
-	return {
-		heavy: maps.heavy.build(),
-		light: maps.light.build()
+	// The key axis carries the run's pairing, which annotate writes as a file. The
+	// spec must match the variants frame's axis, so it is built here, after the
+	// file is ready, and not in the caller, which cannot await it.
+	pairing := inputs.pairing.getDataAsJson()
+	trace := exportSpecs.datasetTrace(inputs.params.blockId, inputs.params.label)
+	built := { heavy: maps.heavy.build(), light: maps.light.build() }
+	frame := pframes.pFrameBuilder()
+	for side in ["heavy", "light"] {
+		frame.add(side + "_trace_file",
+			trace.inject(exportSpecs.traceFileColumn(
+				inputs.params.blockId, side, inputs.params.aminoAcid, pairing)),
+			built[side])
 	}
+	return { traceFiles: frame.build() }
 })

@@ -13,8 +13,8 @@ Usage: trim.py --sequences sequences.fasta --csv_h anarci_H.csv --csv_kl anarci_
 """
 import argparse
 
-from annotate import BUCKETS, pick_frame, read_anarci, read_fasta, reverse_complement
-from regions import _is_gap
+from annotate import BUCKETS, SCFV_ID_SEP, read_anarci, read_fasta, reverse_complement, scfv_split
+from regions import SCHEMES, _is_gap
 
 # Keep a few codons past each end of the numbered domain, so MiXCR aligns V from its start
 # and J to its end while the constant-region tail that derails V is gone.
@@ -47,6 +47,7 @@ def trim(nucleotide, best):
 def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--sequences", required=True, help="The consensus nucleotides, one per id")
+    p.add_argument("--scheme", required=True, choices=SCHEMES)
     p.add_argument("--out", required=True, help="The trimmed FASTA for the main MiXCR align")
     for bucket in BUCKETS:
         p.add_argument("--csv_%s" % bucket.lower(), required=False)
@@ -56,7 +57,14 @@ def main(argv=None):
     nucleotides = read_fasta(args.sequences)
     with open(args.out, "w") as handle:
         for sid, nt in nucleotides.items():
-            handle.write(">%s\n%s\n" % (sid, trim(nt, pick_frame(sid, by_bucket))))
+            picks = scfv_split(sid, by_bucket, args.scheme)
+            if len(picks) == 2:
+                # An scFv read: one trimmed record per domain, keyed by side, so the
+                # main align sees each as its own single-domain read.
+                for pick in picks:
+                    handle.write(">%s%s%s\n%s\n" % (sid, SCFV_ID_SEP, pick[0], trim(nt, pick)))
+            else:
+                handle.write(">%s\n%s\n" % (sid, trim(nt, picks[0] if picks else None)))
 
 
 if __name__ == "__main__":

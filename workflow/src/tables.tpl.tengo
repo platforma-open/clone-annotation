@@ -15,6 +15,7 @@ self.defineOutputs("pairsTable", "clonesTable", "plateSummaryTable", "plateMap",
 
 self.awaitState("InputsLocked")
 self.awaitState("sides", "ResourceReady")
+self.awaitState("pairing", "ResourceReady")
 self.awaitState("params", "ResourceReady")
 
 // `splitDataAndSpec` hands back a map of {spec, data} pairs. The frame builder
@@ -29,6 +30,7 @@ importFrame := func(tsv, settings) {
 
 self.body(func(inputs) {
 	sides := inputs.sides.getDataAsJson()
+	pairing := inputs.pairing.getDataAsJson()
 	params := inputs.params
 
 	trace := exportSpecs.datasetTrace(params.blockId, params.label)
@@ -38,14 +40,14 @@ self.body(func(inputs) {
 	toPool := pframes.pFrameBuilder()
 	for id, column in xsv.importFile(
 		inputs.clones, "tsv",
-		exportSpecs.variantSettings(params.blockId, params.properties, params.scheme, sides, params.identityIsName, params.aminoAcid),
+		exportSpecs.variantSettings(params.blockId, params.properties, params.scheme, sides, params.identityIsName, params.aminoAcid, pairing),
 		{ splitDataAndSpec: true }
 	) {
 		toPool.add("variant." + id, trace.inject(column.spec), column.data)
 	}
 	for id, column in xsv.importFile(
 		inputs.abundance, "tsv",
-		exportSpecs.abundanceSettings(params.blockId, params.identityIsName, params.aminoAcid),
+		exportSpecs.abundanceSettings(params.blockId, params.identityIsName, params.aminoAcid, pairing),
 		{ splitDataAndSpec: true }
 	) {
 		toPool.add("abundance." + id, trace.inject(column.spec), column.data)

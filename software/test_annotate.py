@@ -131,6 +131,20 @@ def write_anarci(path, rows):
             )
 
 
+def write_anarci_typed(path, rows, chain_type):
+    """Like write_anarci, but with a chain type and a per-row start, for the scFv
+    tests where a light domain sits after a heavy one in the same read."""
+    header = ["Id", "domain_no", "chain_type", "score", "seqstart_index"] + [
+        str(n) for n in range(1, 131)
+    ]
+    with open(path, "w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(header)
+        for record, score, start in rows:
+            writer.writerow([record, "0", chain_type, score, str(start)]
+                            + [residue(n) for n in range(1, 131)])
+
+
 def run_annotate(work, report, extra):
     out = os.path.join(work, "annotation.json")
     subprocess.run(
@@ -630,6 +644,190 @@ def test_pick_frame_tuple_matches_what_trim_and_annotate_unpack():
     check("the found tuple has five parts", len(found), 5)
     _labels, _residues, _sc, _start, chain_type = found
     check("the chain type is read from the CSV", chain_type, "H")
+
+
+def test_scfv_split_finds_a_heavy_and_a_light_domain_in_one_read():
+    from annotate import scfv_split
+    labels, residues = numbered(1, 130)
+    by_bucket = {
+        "H": {"s|0": (labels, residues, 150.0, 0, "H")},
+        "KL": {"s|0": (labels, residues, 120.0, 150, "K")},
+    }
+    picks = scfv_split("s", by_bucket, "imgt")
+    check("two domains found", len(picks), 2)
+    check("heavy comes first by position", (picks[0][0], picks[0][2][3]), ("H", 0))
+    check("light comes second", (picks[1][0], picks[1][2][3]), ("KL", 150))
+
+
+def test_scfv_split_leaves_a_single_chain_as_one_pick():
+    from annotate import pick_frame, scfv_split
+    labels, residues = numbered(1, 130)
+    by_bucket = {"H": {"s|0": (labels, residues, 150.0, 0, "H")}}
+    picks = scfv_split("s", by_bucket, "imgt")
+    check("one domain, one pick", len(picks), 1)
+    check("the pick is exactly what pick_frame returns", picks[0], pick_frame("s", by_bucket))
+
+
+def test_scfv_split_rejects_a_truncated_second_domain():
+    from annotate import scfv_split
+    whole_labels, whole_res = numbered(1, 130)
+    part_labels, part_res = numbered(1, 80)  # no CDR3 or FR4: not a whole domain
+    by_bucket = {
+        "H": {"s|0": (whole_labels, whole_res, 150.0, 0, "H")},
+        "KL": {"s|0": (part_labels, part_res, 120.0, 150, "K")},
+    }
+    picks = scfv_split("s", by_bucket, "imgt")
+    check("a fragment is not a pair", len(picks), 1)
+    check("the whole domain is kept", picks[0][0], "H")
+
+
+def test_scfv_split_rejects_overlapping_domains():
+    from annotate import scfv_split
+    labels, residues = numbered(1, 130)
+    by_bucket = {
+        "H": {"s|0": (labels, residues, 150.0, 0, "H")},
+        "KL": {"s|0": (labels, residues, 120.0, 50, "K")},  # starts inside the heavy span
+    }
+    picks = scfv_split("s", by_bucket, "imgt")
+    check("overlapping calls are not a pair", len(picks), 1)
+
+
+def test_scfv_read_becomes_two_construct_paired_entries():
+    work = tempfile.mkdtemp()
+    report = os.path.join(work, "report.json")
+    json.dump({"sequences": [
+        {"id": "s0", "plate": "P1", "well": "A1", "chain": "scFv", "source": "merged"},
+    ]}, open(report, "w"))
+    csv_h = os.path.join(work, "anarci_H.csv")
+    csv_kl = os.path.join(work, "anarci_KL.csv")
+    write_anarci_typed(csv_h, [("s0|0", "150.0", 0)], "H")     # heavy domain at the start
+    write_anarci_typed(csv_kl, [("s0|0", "120.0", 150)], "K")  # light domain after the linker
+    seq_tsv = os.path.join(work, "sequences.tsv")
+    pairs_tsv = os.path.join(work, "pairs.tsv")
+    result = run_annotate(work, report, [
+        "--csv_h", csv_h, "--csv_kl", csv_kl, "--amino-acid",
+        "--out_sequences_tsv", seq_tsv, "--out_pairs_tsv", pairs_tsv])
+
+    ann = result["annotations"]
+    check("one read makes two entries", len(ann), 2)
+    check("a heavy and a light domain", sorted(a["observedChain"] for a in ann), ["H", "KL"])
+    check("both are construct-paired", sorted(a["pairStatus"] for a in ann), ["Paired", "Paired"])
+
+    rows = list(csv.DictReader(open(seq_tsv), delimiter="\t"))
+    check("two sequence rows, keyed apart by side",
+          sorted(r["sequenceKey"] for r in rows), ["P1|A1|scFv|H", "P1|A1|scFv|KL"])
+
+    pairs = list(csv.DictReader(open(pairs_tsv), delimiter="\t"))
+    check("the two domains collapse into one pair", len(pairs), 1)
+    check("the pair carries both chains",
+          (pairs[0]["heavy_aa_VDJRegion"] != "", pairs[0]["light_aa_VDJRegion"] != ""),
+          (True, True))
+
+
+def test_trim_splits_an_scfv_into_one_record_per_domain():
+    import trim
+    work = tempfile.mkdtemp()
+    seqs = os.path.join(work, "sequences.fasta")
+    open(seqs, "w").write(">s0\n%s\n" % ("ACG" * 300))  # long enough for both domains
+    csv_h = os.path.join(work, "anarci_H.csv")
+    csv_kl = os.path.join(work, "anarci_KL.csv")
+    write_anarci_typed(csv_h, [("s0|0", "150.0", 0)], "H")
+    write_anarci_typed(csv_kl, [("s0|0", "120.0", 150)], "K")
+    out = os.path.join(work, "trimmed.fasta")
+    trim.main(["--sequences", seqs, "--scheme", "imgt",
+               "--csv_h", csv_h, "--csv_kl", csv_kl, "--out", out])
+    records = [line[1:].strip() for line in open(out) if line.startswith(">")]
+    check("one trimmed record per domain, keyed by side", sorted(records), ["s0::H", "s0::KL"])
+
+
+def test_scfv_germline_attaches_to_each_domain():
+    work = tempfile.mkdtemp()
+    report = os.path.join(work, "report.json")
+    json.dump({"sequences": [
+        {"id": "s0", "plate": "P1", "well": "A1", "chain": "scFv", "source": "merged"},
+    ]}, open(report, "w"))
+    csv_h = os.path.join(work, "anarci_H.csv")
+    csv_kl = os.path.join(work, "anarci_KL.csv")
+    write_anarci_typed(csv_h, [("s0|0", "150.0", 0)], "H")
+    write_anarci_typed(csv_kl, [("s0|0", "120.0", 150)], "K")
+    mixcr = os.path.join(work, "alignments.tsv")
+    with open(mixcr, "w") as handle:  # each domain aligned on its own, keyed by side
+        handle.write("descrsR1\ttopChains\tbestVGene\tbestVHit\n")
+        handle.write("s0::H\tIGH\tIGHV3-23\tIGHV3-23*00\n")
+        handle.write("s0::KL\tIGK\tIGKV1-5\tIGKV1-5*00\n")
+    ann = run_annotate(work, report, ["--csv_h", csv_h, "--csv_kl", csv_kl,
+                                      "--amino-acid", "--mixcr", mixcr])["annotations"]
+    by_side = {a["observedChain"]: a for a in ann}
+    check("the heavy domain gets its own germline gene", by_side["H"].get("vGene"), "IGHV3-23")
+    check("the light domain gets its own germline gene", by_side["KL"].get("vGene"), "IGKV1-5")
+
+
+def test_scfv_split_orders_a_light_first_construct_by_position():
+    from annotate import scfv_split
+    labels, residues = numbered(1, 130)
+    by_bucket = {
+        "H": {"s|0": (labels, residues, 150.0, 150, "H")},
+        "KL": {"s|0": (labels, residues, 120.0, 0, "K")},
+    }
+    picks = scfv_split("s", by_bucket, "imgt")
+    check("a VL-linker-VH read is still a pair", len(picks), 2)
+    check("the light domain comes first", [p[0] for p in picks], ["KL", "H"])
+
+
+def test_scfv_split_ignores_a_partner_in_another_frame():
+    from annotate import scfv_split
+    labels, residues = numbered(1, 130)
+    by_bucket = {
+        "H": {"s|0": (labels, residues, 150.0, 0, "H")},
+        "KL": {"s|1": (labels, residues, 120.0, 150, "K")},
+    }
+    picks = scfv_split("s", by_bucket, "imgt")
+    check("domains in two frames are not one construct", len(picks), 1)
+    check("the best domain is kept", picks[0][0], "H")
+
+
+def scfv_run(work, sequences, extra=()):
+    """annotate over reads that each carry a heavy then a light domain."""
+    report = os.path.join(work, "report.json")
+    json.dump({"sequences": sequences}, open(report, "w"))
+    csv_h = os.path.join(work, "anarci_H.csv")
+    csv_kl = os.path.join(work, "anarci_KL.csv")
+    write_anarci_typed(csv_h, [(s["id"] + "|0", "150.0", 0) for s in sequences], "H")
+    write_anarci_typed(csv_kl, [(s["id"] + "|0", "120.0", 150) for s in sequences], "K")
+    return run_annotate(work, report, ["--csv_h", csv_h, "--csv_kl", csv_kl,
+                                       "--amino-acid"] + list(extra))
+
+
+def test_a_chain_label_does_not_flag_an_scfv_domain():
+    work = tempfile.mkdtemp()
+    ann = scfv_run(work, [
+        {"id": "s0", "plate": "P1", "well": "A1", "chain": "H", "source": "merged"},
+    ])["annotations"]
+    check("neither domain is a chain mismatch",
+          [a.get("chainMismatch", False) for a in ann], [False, False])
+
+
+def test_two_scfv_reads_in_one_well_are_two_pairs():
+    work = tempfile.mkdtemp()
+    ann = scfv_run(work, [
+        {"id": "s0", "plate": "P1", "well": "A1", "chain": "H", "source": "merged",
+         "pairKey": "P1|A1"},
+        {"id": "s1", "plate": "P1", "well": "A1", "chain": "L", "source": "merged",
+         "pairKey": "P1|A1"},
+    ])["annotations"]
+    check("all four domains are paired", [a["pairStatus"] for a in ann], ["Paired"] * 4)
+    partner = {a["id"] + a["sideTag"]: a["pairedWith"] for a in ann}
+    check("each domain pairs within its own read",
+          (partner["s0H"], partner["s1KL"]), ("P1|A1|H|KL", "P1|A1|L|H"))
+
+
+def test_the_run_pairing_names_an_scfv_run_construct():
+    work = tempfile.mkdtemp()
+    out = os.path.join(work, "pairing.json")
+    scfv_run(work, [
+        {"id": "s0", "plate": "P1", "well": "A1", "chain": "", "source": "merged"},
+    ], ["--out_pairing", out])
+    check("an scFv run is construct", json.load(open(out)), "construct")
 
 
 def test_trim_keeps_the_whole_read_without_numbering():

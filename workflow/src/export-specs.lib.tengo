@@ -93,6 +93,12 @@ chainDomain := func(chain) {
 
 keyAxis := func(blockId, ...opts) {
 	aminoAcid := len(opts) > 0 && opts[0] == true
+	// construct for an scFv run (two domains of one molecule); else declared, the
+	// chains paired by the well rather than seen together in a cell.
+	pairing := "declared"
+	if len(opts) > 1 && !is_undefined(opts[1]) && opts[1] != "" {
+		pairing = opts[1]
+	}
 	return {
 		column: "variantKey",
 		naRegex: "",
@@ -107,8 +113,7 @@ keyAxis := func(blockId, ...opts) {
 				"pl7.app/identitySource": "derived",
 				"pl7.app/vdj/receptor": RECEPTOR,
 				"pl7.app/vdj/resolution": "receptor",
-				// The chains are paired by the well, not seen together in a cell.
-				"pl7.app/vdj/pairing": "declared",
+				"pl7.app/vdj/pairing": pairing,
 				// The key always hashes a heavy and a light slot (one may be empty),
 				// so the axis is a Heavy+Light receptor key whatever sides a run holds.
 				"pl7.app/vdj/receptorChains": "Heavy+Light",
@@ -604,6 +609,7 @@ addAll := func(into, more) {
 variantSettings := func(blockId, properties, scheme, sides, ...opts) {
 	nameId := len(opts) > 0 && opts[0] == true
 	aminoAcid := len(opts) > 1 && opts[1] == true
+	pairing := len(opts) > 2 ? opts[2] : undefined
 	chains := CHAINS
 	if !is_undefined(sides) {
 		chains = []
@@ -627,7 +633,7 @@ variantSettings := func(blockId, properties, scheme, sides, ...opts) {
 	}
 	columns = addAll(columns, propertyColumns(properties))
 	return {
-		axes: [keyAxis(blockId, aminoAcid)],
+		axes: [keyAxis(blockId, aminoAcid, pairing)],
 		columns: columns,
 		storageFormat: "Parquet",
 		partitionKeyLength: 0
@@ -640,8 +646,9 @@ variantSettings := func(blockId, properties, scheme, sides, ...opts) {
 abundanceSettings := func(blockId, ...opts) {
 	nameId := len(opts) > 0 && opts[0] == true
 	aminoAcid := len(opts) > 1 && opts[1] == true
+	pairing := len(opts) > 2 ? opts[2] : undefined
 	return {
-		axes: [sampleAxis(blockId, nameId), keyAxis(blockId, aminoAcid)],
+		axes: [sampleAxis(blockId, nameId), keyAxis(blockId, aminoAcid, pairing)],
 		columns: [abundanceColumn(nameId)],
 		storageFormat: "Parquet",
 		partitionKeyLength: 1
@@ -668,13 +675,14 @@ datasetTrace := func(blockId, label) {
 // file, not something a table or a chart can show.
 traceFileColumn := func(blockId, side, ...opts) {
 	aminoAcid := len(opts) > 0 && opts[0] == true
+	pairing := len(opts) > 1 ? opts[1] : undefined
 	chain := side == "heavy" ? "IGHeavy" : "IGLight"
 	return {
 		kind: "PColumn",
 		name: "pl7.app/vdj/sequence/traceFile",
 		valueType: "File",
 		domain: maps.merge({ "pl7.app/fileExtension": "ab1" }, chainDomain(chain)),
-		axesSpec: [keyAxis(blockId, aminoAcid).spec],
+		axesSpec: [keyAxis(blockId, aminoAcid, pairing).spec],
 		annotations: {
 			"pl7.app/label": LABEL[chain] + " Trace File",
 			"pl7.app/hideDataFromUi": "true"

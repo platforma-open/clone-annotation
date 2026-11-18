@@ -22,6 +22,15 @@ export const sdkPlugin = defineAppV3(platforma, (app) => {
     showImportDialog.value = true;
   }
 
+  // Close the importer once files are present, so it does not stay open after the
+  // files arrive by any path other than the dialog itself.
+  watch(
+    () => app.model.data.traceFiles.length,
+    (count) => {
+      if (count > 0) showImportDialog.value = false;
+    },
+  );
+
   // Run closes the settings, as in other blocks. Before the first run the flag is
   // undefined rather than false, so any start counts.
   watch(
