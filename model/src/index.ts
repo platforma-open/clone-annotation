@@ -654,10 +654,12 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   // the UI can fetch the raw .ab1 bytes and draw the untrimmed chromatogram. These are
   // the exported blobs (`traceBlobs`), not `fileImports`, which holds the import index.
   // Reads upload in the main run, so a handle appears here only once the block has run.
+  // A project last run before this field existed has no `traceBlobs`, so its absence
+  // is normal, not an error.
   .output("traceContent", (ctx) =>
     Object.fromEntries(
       ctx.outputs
-        ?.resolve({ field: "traceBlobs", assertFieldType: "Input" })
+        ?.resolve({ field: "traceBlobs", assertFieldType: "Input", allowPermanentAbsence: true })
         ?.mapFields((handle, acc) => [handle as ImportFileHandle, acc.getFileHandle()], {
           skipUnresolved: true,
         }) ?? [],
