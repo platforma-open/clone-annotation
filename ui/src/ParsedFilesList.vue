@@ -45,7 +45,7 @@ const toHtml = computed(() => {
           ? `<pre>${highlightMatch(f.relativePath, f.match, opts)}</pre>`
           : `<pre class="${styles["unmatched"]}">${escapeHtml(f.relativePath)}</pre>`;
         const remove = `<button type="button" class="${styles["remove"]}" data-remove="${position.value.get(f)}" title="Remove from the list" aria-label="Remove ${escapeHtml(f.relativePath)}">×</button>`;
-        return `<div class="${styles["row"]}">${remove}${text}</div>`;
+        return `<div class="${styles["row"]}">${text}${remove}</div>`;
       })
       .join("");
 });
@@ -104,10 +104,15 @@ function onListClick(e: MouseEvent) {
         </summary>
         <div v-html="toHtml(g.files)" />
       </details>
-      <details v-if="groups.matched.length" :open="!hasProblems" data-testid="matched">
+      <details v-if="hasProblems && groups.matched.length" data-testid="matched">
         <summary>{{ groups.matched.length }} {{ props.unit }}(s) matched without problems</summary>
         <div v-html="toHtml(groups.matched)" />
       </details>
+      <div
+        v-else-if="groups.matched.length"
+        data-testid="matched"
+        v-html="toHtml(groups.matched)"
+      />
     </div>
   </div>
 </template>
@@ -123,9 +128,10 @@ function onListClick(e: MouseEvent) {
 
 .matchText {
   display: flex;
-  padding: 8px 0 4px;
+  height: 40px;
+  padding: 12px 0;
   align-items: center;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
 }
@@ -198,10 +204,9 @@ function onListClick(e: MouseEvent) {
 }
 
 .fileList pre {
-  line-height: 24px;
+  line-height: 22px;
   margin: 0;
   font-family: var(--font-family-monospace);
-  font-size: 16px;
 }
 
 .fileList pre span {

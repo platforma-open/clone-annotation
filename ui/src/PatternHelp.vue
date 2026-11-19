@@ -23,7 +23,7 @@ const T = {
 
 <template>
   <PlTooltip position="bottom" max-width="460px" :close-delay="300">
-    <PlBtnGhost icon="help" aria-label="Pattern help" />
+    <PlBtnGhost size="small" icon="help" aria-label="Pattern help" @click.stop />
     <template #tooltip>
       <div :class="styles.help">
         <p>
