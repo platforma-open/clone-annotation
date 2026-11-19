@@ -5,6 +5,7 @@ import type {
 } from "@platforma-open/milaboratories.clone-annotation.model";
 import {
   basename,
+  DEFAULT_QUALITY_THRESHOLD,
   getFilePathFromHandle,
 } from "@platforma-open/milaboratories.clone-annotation.model";
 import type { PlAgHeaderComponentParams } from "@platforma-sdk/ui-vue";
@@ -14,12 +15,14 @@ import {
   PlAgCellFile,
   PlAgCellStatusTag,
   PlAgColumnHeader,
+  PlAgTextAndButtonCell,
 } from "@platforma-sdk/ui-vue";
 import type { ColDef, GridApi, GridOptions, GridReadyEvent, IRowNode } from "ag-grid-enterprise";
 import { AgGridVue } from "ag-grid-vue3";
-import { computed, shallowRef } from "vue";
+import { computed, ref, shallowRef } from "vue";
 import { useApp } from "./app";
 import { cloneKey } from "./properties";
+import RawTraceViewer, { type RawTraceRead } from "./RawTraceViewer.vue";
 import type { SelectedFile } from "./trace_set";
 import { ALL_EXTENSIONS, compilePattern } from "./trace_set";
 
@@ -162,7 +165,26 @@ const wellLabel = computed(() => (identityIsName.value ? "Sequence ID" : "Well")
 
 const columnDefs = computed<ColDef<FileRow>[]>(() => [
   makeRowNumberColDef(),
-  { headerName: "Path", field: "path", flex: 2, minWidth: 160 },
+  {
+    headerName: "Path",
+    field: "path",
+    flex: 2,
+    minWidth: 160,
+    // On an uploaded trace file, a hover button opens its raw Sanger trace. Other
+    // rows keep the plain path cell.
+    cellRendererSelector: (cell) =>
+      canViewRaw(cell.data)
+        ? {
+            component: PlAgTextAndButtonCell,
+            params: {
+              icon: "maximize",
+              btnLabel: "Trace",
+              invokeRowsOnDoubleClick: false,
+              onClick: (p: { data?: FileRow }) => p.data && openRawRow(p.data),
+            },
+          }
+        : undefined,
+  },
   ...(hasValue("plate") && !identityIsName.value
     ? [{ headerName: "Plate", field: "plate", flex: 1, minWidth: 100 } satisfies ColDef<FileRow>]
     : []),
@@ -262,6 +284,51 @@ const columnDefs = computed<ColDef<FileRow>[]>(() => [
   },
 ]);
 
+// Downloadable handle per uploaded read, keyed by its import handle. Present only
+// after the block has run (reads upload in the main run), so the raw-trace action
+// is offered only for files that are already there.
+const traceContent = computed(() => app.model.outputs.traceContent ?? {});
+const isTraceForm = computed(() => (app.model.data.form ?? "trace") === "trace");
+const qualityThreshold = computed(
+  () => app.model.data.qualityThreshold ?? DEFAULT_QUALITY_THRESHOLD,
+);
+
+const rawOpen = ref(false);
+const rawReads = ref<RawTraceRead[]>([]);
+
+function rawLabel(row: FileRow): string {
+  return [row.plate, row.well, row.chain, row.direction].filter(Boolean).join(" / ") || row.path;
+}
+
+function rawReadsOf(rows: FileRow[]): RawTraceRead[] {
+  return rows.flatMap((row) => {
+    const handle = traceContent.value[row.file];
+    return handle
+      ? [
+          {
+            key: row.key,
+            label: rawLabel(row),
+            chainLabel: "",
+            handle: handle.handle,
+            trimmed: row.read?.trimmed,
+          },
+        ]
+      : [];
+  });
+}
+
+/** True once a file's read is uploaded, so its raw trace can be opened. */
+function canViewRaw(row: FileRow | undefined): boolean {
+  return isTraceForm.value && row !== undefined && traceContent.value[row.file] !== undefined;
+}
+
+function openRawRow(row: FileRow) {
+  const reads = rawReadsOf([row]);
+  if (reads.length === 0) return;
+  rawReads.value = reads;
+  rawOpen.value = true;
+}
+
 const gridApi = shallowRef<GridApi<FileRow>>();
 
 function onGridReady(params: GridReadyEvent) {
@@ -318,6 +385,7 @@ const gridOptions: GridOptions<FileRow> = {
     :gridOptions="gridOptions"
     @grid-ready="onGridReady"
   />
+  <RawTraceViewer v-model="rawOpen" :reads="rawReads" :quality-threshold="qualityThreshold" />
 </template>
 
 <style>
