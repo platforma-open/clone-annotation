@@ -109,6 +109,9 @@ export type TraceRead = {
   /** Mean Phred over that stretch. Absent where the form carried no quality. */
   meanQuality?: number;
   kept: boolean;
+  /** Bases Mott trimming cut from the start and the end. Absent for a form that
+   * carries no quality, which is not trimmed. */
+  trimmed?: [number, number];
 };
 
 /** A trace that produced nothing usable, and why. */
@@ -260,6 +263,11 @@ export type TraceReport = {
   sequences: Sequence[];
 };
 
+/**
+ * Every raw read behind each sequence and clone, for the raw-trace view. Paths are
+ * the ones the Files table shows; the UI maps each to its uploaded file. Keyed as
+ * the tables are, so a table selection resolves straight to its reads.
+ */
 /**
  * How a sheet's columns are read. Stated by the scientist rather than guessed
  * from the headers, on the same terms as the name pattern.
@@ -640,6 +648,20 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
           }) ?? [],
       ),
     { isActive: true },
+  )
+
+  // Each uploaded read as a downloadable blob handle, keyed by its import handle, so
+  // the UI can fetch the raw .ab1 bytes and draw the untrimmed chromatogram. These are
+  // the exported blobs (`traceBlobs`), not `fileImports`, which holds the import index.
+  // Reads upload in the main run, so a handle appears here only once the block has run.
+  .output("traceContent", (ctx) =>
+    Object.fromEntries(
+      ctx.outputs
+        ?.resolve({ field: "traceBlobs", assertFieldType: "Input" })
+        ?.mapFields((handle, acc) => [handle as ImportFileHandle, acc.getFileHandle()], {
+          skipUnresolved: true,
+        }) ?? [],
+    ),
   )
 
   // Drives the sheet's upload and lets the UI read its bytes to offer the columns.

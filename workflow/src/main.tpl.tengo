@@ -43,6 +43,9 @@ wf.setPreRun(assets.importTemplate(":prerun"))
 
 wf.body(func(args) {
 	fileImports := {}
+	// The imported read blobs, keyed by import handle, so the UI can download the raw
+	// .ab1 bytes. fileImports holds the import index (for progress), not a blob.
+	traceBlobs := {}
 
 	traces := args.traces
 	if is_undefined(traces) {
@@ -91,6 +94,7 @@ wf.body(func(args) {
 			nextFile = nextFile + 1
 			fileIds[t.handle] = fileId
 			blobs[fileId] = imp.file
+			traceBlobs[t.handle] = file.exportFile(imp.file)
 
 			plate := "Unplaced"
 			if !is_undefined(t.fields) {
@@ -109,6 +113,7 @@ wf.body(func(args) {
 	blockId := wf.blockId().getDataAsJson()
 	outputs := {
 		fileImports: fileImports,
+		traceBlobs: traceBlobs,
 		clones: joined.clones,
 		unmatched: clones.unmatched(traces),
 		wellsWithoutProperties: joined.clonesWithout,
