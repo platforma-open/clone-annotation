@@ -413,7 +413,8 @@ function pieceTitle(p: Piece): string | undefined {
 }
 
 .title {
-  font-weight: 600;
+  font-size: 13px;
+  color: var(--txt-03);
 }
 
 .nav {

@@ -11,10 +11,12 @@ import {
 import {
   PlBtnGhost,
   PlBtnPrimary,
+  PlBtnSecondary,
   PlDialogModal,
   PlDropdown,
   PlFileDialog,
   PlProgressCell,
+  PlRow,
   PlTextField,
 } from "@platforma-sdk/ui-vue";
 import { computed, reactive, watch } from "vue";
@@ -74,13 +76,15 @@ const example = computed(() => {
 });
 
 const isCombined = computed(() => isMultiRecordForm(draft.form) && draft.fileShape === "combined");
-const title = computed(() =>
-  draft.form === "fastqNt"
-    ? "Import FASTQ"
-    : isMultiRecordForm(draft.form)
-      ? "Import FASTA"
-      : "Import traces",
-);
+
+// The dropdown stays on screen for traces, so the row does not reflow when the
+// input type changes. A trace is always one per file, so it shows that, locked.
+const fileShapeShown = computed({
+  get: () => (isMultiRecordForm(draft.form) ? draft.fileShape : "perFile"),
+  set: (v) => {
+    if (isMultiRecordForm(draft.form)) draft.fileShape = v;
+  },
+});
 
 // Closing both is how the scientist cancels out of importing altogether.
 watch(
@@ -202,51 +206,59 @@ function doImport() {
     :close-on-outside-click="false"
     data-testid="import-dialog"
   >
-    <template #title>{{ title }}</template>
+    <template #title>Import files</template>
 
-    <PlDropdown
-      v-model="draft.form"
-      :options="INPUT_FORM_OPTIONS"
-      :required="true"
-      label="Input type"
-    >
-      <template #tooltip>
-        What kind of sequence files you are loading; all of them are read as this one type. A Sanger
-        trace is a chromatogram from Sanger sequencing. FASTA holds plain sequences, nucleotide or
-        amino acid. FASTQ holds reads with a quality score for each base.
-      </template>
-    </PlDropdown>
-
-    <PlDropdown
-      v-if="isMultiRecordForm(draft.form)"
-      v-model="draft.fileShape"
-      :options="FILE_SHAPE_OPTIONS"
-      :required="true"
-      label="File format"
-    >
-      <template #tooltip>
-        How your sequences are stored. Choose "One sequence per file" when each file holds a single
-        sequence. Choose "Multi sequence file" when one file holds many sequences, each with its own
-        header line.
-      </template>
-    </PlDropdown>
-
-    <PlTextField v-model="draft.name" label="Dataset Name" :clearable="() => ''" />
+    <PlRow alignCenter>
+      <PlTextField
+        v-model="draft.name"
+        label="Dataset Name"
+        :clearable="() => ''"
+        class="flex-grow-1"
+      />
+      <PlDropdown
+        v-model="draft.form"
+        :options="INPUT_FORM_OPTIONS"
+        :required="true"
+        label="Input type"
+        :style="{ flexBasis: '260px', flexShrink: 0 }"
+      >
+        <template #tooltip>
+          What kind of sequence files you are loading; all of them are read as this one type. A
+          Sanger trace is a chromatogram from Sanger sequencing. FASTA holds plain sequences,
+          nucleotide or amino acid. FASTQ holds reads with a quality score for each base.
+        </template>
+      </PlDropdown>
+      <PlDropdown
+        v-model="fileShapeShown"
+        :disabled="!isMultiRecordForm(draft.form)"
+        :options="FILE_SHAPE_OPTIONS"
+        :required="true"
+        label="File format"
+        :style="{ flexBasis: '220px', flexShrink: 0 }"
+      >
+        <template #tooltip>
+          How your sequences are stored. Choose "One sequence per file" when each file holds a
+          single sequence. Choose "Multi sequence file" when one file holds many sequences, each
+          with its own header line.
+        </template>
+      </PlDropdown>
+    </PlRow>
 
     <!-- One group, so its parts sit closer than the dialog's own gap between sections. -->
     <div class="pattern">
-      <PatternBuilder v-if="ready" v-model="draft.pattern" :files="parsed" />
+      <PlTextField
+        v-model="draft.pattern"
+        label="Pattern"
+        :placeholder="example"
+        :error="compiled.error"
+        clearable
+      >
+        <template #append>
+          <PatternHelp />
+        </template>
+      </PlTextField>
 
-      <div class="pattern-row">
-        <PlTextField
-          v-model="draft.pattern"
-          label="Pattern"
-          :placeholder="example"
-          :error="compiled.error"
-          clearable
-        />
-        <PatternHelp />
-      </div>
+      <PatternBuilder v-if="ready" v-model="draft.pattern" :files="parsed" />
 
       <!-- PlProgressCell is height:100% with an absolute body, so it needs a sized parent. -->
       <div v-if="isCombined && !headersReady" class="headers-loader">
@@ -262,12 +274,11 @@ function doImport() {
 
     <ParsedFilesList :items="parsed" :unit="isCombined ? 'header' : 'file'" @remove="removeFiles" />
 
+    <PlBtnSecondary @click="() => (draft.filePickerOpen = true)">+ add more files</PlBtnSecondary>
+
     <template #actions>
       <PlBtnPrimary :disabled="!canImport" @click="doImport">Import</PlBtnPrimary>
       <PlBtnGhost @click.stop="() => (draft.formOpen = false)">Cancel</PlBtnGhost>
-      <PlBtnGhost class="add-files" icon="add" @click="() => (draft.filePickerOpen = true)">
-        Add more files
-      </PlBtnGhost>
     </template>
   </PlDialogModal>
 
@@ -285,20 +296,6 @@ function doImport() {
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-.pattern-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 4px;
-}
-
-.pattern-row > :first-child {
-  flex: 1;
-}
-
-.add-files {
-  margin-left: auto;
 }
 
 .warnings {

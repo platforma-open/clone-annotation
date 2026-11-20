@@ -12,7 +12,6 @@ ll := import("@platforma-sdk/workflow-tengo:ll")
 clones := import(":clones")
 sequenceCols := import(":sequence-cols")
 readCols := import(":read-cols")
-exportSpecs := import(":export-specs")
 tracy := import(":tracy")
 readerTrace := import(":reader-trace")
 readerFastaNt := import(":reader-fasta-nt")
@@ -227,8 +226,10 @@ wf.body(func(args) {
 			arg("--out_plates_tsv").arg("plates.tsv").
 			arg("--out_wells_tsv").arg("wells.tsv").
 			arg("--out_sides").arg("sides.json").
+			arg("--out_pairing").arg("pairing.json").
 			saveFileContent("annotation.json").
 			saveFileContent("sides.json").
+			saveFileContent("pairing.json").
 			saveFile("sequences.tsv").
 			saveFile("pairs.tsv").
 			saveFile("clones.tsv").
@@ -259,6 +260,7 @@ wf.body(func(args) {
 				addFile("anarci_H.csv", anarci.getFile("anarci_H.csv")).
 				addFile("anarci_KL.csv", anarci.getFile("anarci_KL.csv")).
 				arg("--sequences").arg(tracy.nucleotideName).
+				arg("--scheme").arg(scheme).
 				arg("--csv_h").arg("anarci_H.csv").
 				arg("--csv_kl").arg("anarci_KL.csv").
 				arg("--out").arg("trimmed.fasta").
@@ -441,6 +443,7 @@ wf.body(func(args) {
 		// which columns exist. A pure template may not await.
 		tables := render.createEphemeral(tablesTpl, {
 			sides: annotatedRun.getFileContent("sides.json"),
+			pairing: annotatedRun.getFileContent("pairing.json"),
 			pairs: annotatedRun.getFile("pairs.tsv"),
 			clones: annotatedRun.getFile("clones.tsv"),
 			abundance: annotatedRun.getFile("abundance.tsv"),
@@ -468,18 +471,12 @@ wf.body(func(args) {
 				idOf[manifest[id].path] = id
 			}
 			traceFiles := render.createEphemeral(traceFilesTpl, {
-				params: smart.createJsonResource({ idOf: idOf }),
+				params: smart.createJsonResource({ idOf: idOf, blockId: blockId, label: label, aminoAcid: isAminoAcid }),
 				traces: staged.build(),
-				traceReads: annotatedRun.getFileContent("trace_reads.tsv")
+				traceReads: annotatedRun.getFileContent("trace_reads.tsv"),
+				pairing: annotatedRun.getFileContent("pairing.json")
 			})
-			trace := exportSpecs.datasetTrace(blockId, label)
-			traceFilesBuilder := pframes.pFrameBuilder()
-			for side in ["heavy", "light"] {
-				traceFilesBuilder.add(side + "_trace_file",
-					trace.inject(exportSpecs.traceFileColumn(blockId, side, isAminoAcid)),
-					traceFiles.output(side))
-			}
-			outputs.traceFiles = pframes.exportFrame(traceFilesBuilder.build())
+			outputs.traceFiles = pframes.exportFrame(traceFiles.output("traceFiles"))
 		}
 	}
 

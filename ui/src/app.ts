@@ -22,6 +22,16 @@ export const sdkPlugin = defineAppV3(platforma, (app) => {
     showImportDialog.value = true;
   }
 
+  // Close the importer when a set is imported by any path other than the dialog.
+  // It watches the pattern, not the files: the dialog writes a combined set's files
+  // before Import so prerun can read their headers, and only an import sets the pattern.
+  watch(
+    () => app.model.data.namePattern,
+    (pattern) => {
+      if (pattern && app.model.data.traceFiles.length > 0) showImportDialog.value = false;
+    },
+  );
+
   // Run closes the settings, as in other blocks. Before the first run the flag is
   // undefined rather than false, so any start counts.
   watch(

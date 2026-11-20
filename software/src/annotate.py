@@ -29,6 +29,7 @@ from regions import (
     SCHEMES,
     STATUS_ANNOTATED,
     STATUS_FAILED,
+    WHOLE,
     build_regions,
     position_columns,
 )
@@ -145,6 +146,11 @@ UNPAIRED = "Unpaired"
 AMBIGUOUS = "Ambiguous"
 NO_SEQUENCE = "No sequence"
 
+# Joins an scFv read's id to a side, so trim writes one record per domain and the
+# main align keys each domain's alignment back to the right chain. Part of the
+# read id, so MiXCR carries it through descrsR1 the way it does the id itself.
+SCFV_ID_SEP = "::"
+
 
 def chain_class(entry):
     """What the sequence is, preferring what ANARCI saw over what the name said."""
@@ -172,16 +178,40 @@ def pair_up(annotations, declared):
     """Hold a clone's two chains together, and say so when they cannot be.
 
     `declared` is whether the set states a chain at all. Where it does not, the
-    material is already one sequence and nothing is held up waiting for a
-    partner it was never going to have (R20).
+    material is already one sequence and nothing is held up waiting for a partner
+    it was never going to have (R20). An scFv read is the exception: its two
+    domains are one molecule, a known pair whatever the set declares.
     """
     # Labels are checked whether or not there are pairs to make: a heavy-only
     # plate that holds a light chain is wrong all the same.
     mismatched = check_labels(annotations)
+    construct = [e for e in annotations if e.get("construct")]
+    rest = [e for e in annotations if not e.get("construct")]
+    unpaired = _pair_constructs(construct) + _pair_declared(rest, declared)
+    return sorted(unpaired), mismatched
+
+
+def _pair_constructs(annotations):
+    """Pair each scFv read's two domains with each other. They are grouped by the
+    read id, not the pair key: two scFv reads in one well are two molecules, each
+    a complete pair, not four chains competing for one clone."""
+    by_read = {}
+    for entry in annotations:
+        by_read.setdefault(entry["id"], []).append(entry)
+    for one, other in by_read.values():
+        for a, b in ((one, other), (other, one)):
+            a["pairStatus"] = PAIRED
+            a["pairedWith"] = sequence_key(b)
+    return []
+
+
+def _pair_declared(annotations, declared):
+    """The declared-chain pairing: a clone's two files held together by their well
+    when the set names which chain each file carries."""
     if not pairing_applies(annotations, declared):
         for entry in annotations:
             entry["pairStatus"] = SINGLE_DOMAIN
-        return [], mismatched
+        return []
 
     groups = {}
     for entry in annotations:
@@ -213,15 +243,18 @@ def pair_up(annotations, declared):
                 member["pairStatus"] = AMBIGUOUS
                 unpaired.append(where(member))
 
-    return sorted(unpaired), mismatched
+    return unpaired
 
 
 def check_labels(annotations):
     """Mark every sequence whose file name says one chain and whose bases read
     as another, and list them. Only a clear contradiction counts: an unread
-    label on either side is not evidence of anything."""
+    label on either side is not evidence of anything. An scFv read holds both
+    chains, so no single-chain label can contradict it."""
     mismatched = []
     for entry in annotations:
+        if entry.get("construct"):
+            continue
         declared_as = DECLARED_CLASS.get(entry["declaredChain"].strip().lower(), "")
         observed = entry.get("observedChain", "")
         if declared_as and observed and declared_as != observed:
@@ -719,6 +752,16 @@ def read_constant(path):
     return out
 
 
+def constant_side(record):
+    """The side a constant call belongs to, by its C gene's locus, or None."""
+    gene = record.get("cGene", "").upper()
+    if gene.startswith("IGH"):
+        return "heavy"
+    if gene.startswith(("IGK", "IGL")):
+        return "light"
+    return None
+
+
 def translate(nucleotide):
     return "".join(
         CODONS.get(nucleotide[i : i + 3].upper(), "X")
@@ -835,6 +878,56 @@ def domain_score(candidate_id, by_bucket, scheme):
     return domain_complete({"aa": amino}), sum(len(v) for v in amino.values())
 
 
+def _domain_extent(numbering, scheme, bucket):
+    """Where a numbered domain ends in the protein, and whether it is whole.
+
+    The end is `seqstart_index` plus the residues the domain placed, so two
+    domains' spans can be tested for overlap. Whole means FR1 through FR4, the
+    same bar a single chain must clear."""
+    labels, residues, _score, start, _chain = numbering
+    amino, _ = build_regions(
+        labels, residues, REGION_RANGES[scheme][BUCKET_TABLE[bucket]], None, start)
+    return start + len(amino.get(WHOLE, "")), domain_complete({"aa": amino})
+
+
+def scfv_split(seq_id, by_bucket, scheme):
+    """The variable domains a read carries, as picks in read order.
+
+    One pick is the single best frame, exactly as `pick_frame` finds it, so a
+    normal single-chain read is unchanged. Two picks mean an scFv: a heavy and a
+    light domain ANARCI numbered in the one reading frame, on disjoint spans, each
+    whole. The picks are ordered by where they sit in the read, so the linker is
+    the gap between them. Each pick has `pick_frame`'s shape
+    `(bucket, frame, numbering, score)`.
+
+    The guards are deliberate: opposite sides (a heavy with a light, not two of a
+    kind), each a whole domain, and no overlap. A truncated or doubtful second
+    call falls back to a single chain rather than inventing a pair."""
+    best = pick_frame(seq_id, by_bucket)
+    if best is None:
+        return []
+    bucket, frame, _numbering, _score = best
+    side = SIDES.get(bucket)
+    other = None
+    for other_bucket, by_record in by_bucket.items():
+        if SIDES.get(other_bucket) in (None, side):
+            continue
+        found = by_record.get("%s|%d" % (seq_id, frame))
+        if found is not None and (other is None or found[2] > other[2][2]):
+            other = (other_bucket, frame, found, found[2])
+    if other is None:
+        return [best]
+
+    picks = sorted([best, other], key=lambda pick: pick[2][3])
+    first_end, first_whole = _domain_extent(picks[0][2], scheme, picks[0][0])
+    _second_end, second_whole = _domain_extent(picks[1][2], scheme, picks[1][0])
+    if not (first_whole and second_whole):
+        return [best]
+    if first_end > picks[1][2][3]:  # the first domain runs into the second: not a clean pair
+        return [best]
+    return picks
+
+
 def choose_candidate(sequence, by_bucket, scheme):
     """Keep whichever of the merge and the single reads numbers best.
 
@@ -864,7 +957,12 @@ def choose_candidate(sequence, by_bucket, scheme):
 
 # A sequence is one plate, one well, one chain. The same key the p-frame axis uses.
 def sequence_key(entry):
-    return "|".join([entry["plate"], entry["well"], entry["declaredChain"]])
+    # The side keeps an scFv read's two domains apart: they share a plate, well and
+    # declared chain. A single-chain entry has no side, so its key is unchanged.
+    parts = [entry["plate"], entry["well"], entry["declaredChain"]]
+    if entry.get("sideTag"):
+        parts.append(entry["sideTag"])
+    return "|".join(parts)
 
 
 def sequence_reason(entry, sequence):
@@ -1006,10 +1104,14 @@ def candidate_pairings(annotations):
     Where a side has more than one candidate the clone is already Ambiguous,
     and each combination is carried rather than one of them chosen. Showing one
     and dropping the rest would hide the very thing the status reports.
+
+    An scFv read's two domains are grouped by the read, not the clone: two scFv
+    reads in one well are two known pairs, and crossing them would invent two more.
     """
     groups = {}
     for entry in annotations:
-        groups.setdefault(entry.get("pairKey", ""), []).append(entry)
+        key = ("read", entry["id"]) if entry.get("construct") else ("clone", entry.get("pairKey", ""))
+        groups.setdefault(key, []).append(entry)
 
     out = []
     for members in groups.values():
@@ -1611,6 +1713,9 @@ def main(argv=None):
                    help="One row per plate: how its wells came out")
     p.add_argument("--out_sides", required=False,
                    help="The clone sides the set has sequences for, as a JSON list")
+    p.add_argument("--out_pairing", required=False,
+                   help="The run's pairing mode, as a JSON string: construct for scFv reads, "
+                        "else declared")
     p.add_argument("--peaks", required=False,
                    help="Each kept read's bases and mixed positions, as JSON")
     p.add_argument("--export", choices=sorted(EXPORT_VERDICTS), default="passed",
@@ -1637,77 +1742,61 @@ def main(argv=None):
     peaks = json.loads(pathlib.Path(args.peaks).read_text()) if args.peaks else {}
 
     annotations, not_numbered, not_aligned = [], [], []
-    for sequence in sequences:
-        seq_id = sequence["id"]
-        where = "%s %s %s" % (sequence["plate"], sequence["well"], sequence["chain"])
-        entry = {
-            "id": seq_id,
-            "plate": sequence["plate"],
-            "well": sequence["well"],
-            "declaredChain": sequence["chain"],
-            "pairKey": sequence.get("pairKey", ""),
-        }
-
-        chosen = choose_candidate(sequence, by_bucket, args.scheme)
-        best = pick_frame(chosen, by_bucket)
-        if best is None:
-            entry["status"] = STATUS_FAILED
-            # Only a sequence that produced bases can fail to be numbered. One
-            # that never had a read is already accounted for upstream.
-            if sequence.get("source") != "none":
-                not_numbered.append(where.strip())
-        else:
-            bucket, frame, (labels, residues, _, start, chain_type), _ = best
-            entry["frame"] = frame
-            entry["observedChain"] = bucket
-            # ANARCI's own kappa/lambda call for the winning domain.
-            entry["anarciChainType"] = chain_type
-            nucleotide = nucleotides.get(chosen)
-            amino, bases = build_regions(
-                labels,
-                residues,
-                REGION_RANGES[args.scheme][BUCKET_TABLE[bucket]],
-                codon_reader(nucleotide, frame) if nucleotide else None,
-                start,
+    def fill_domain(entry, pick, nucleotide, sequence):
+        """One variable domain's regions, translation and QC, onto `entry`."""
+        bucket, frame, (labels, residues, _s, start, chain_type), _sc = pick
+        entry["frame"] = frame
+        entry["observedChain"] = bucket
+        # ANARCI's own kappa/lambda call for the winning domain.
+        entry["anarciChainType"] = chain_type
+        amino, bases = build_regions(
+            labels,
+            residues,
+            REGION_RANGES[args.scheme][BUCKET_TABLE[bucket]],
+            codon_reader(nucleotide, frame) if nucleotide else None,
+            start,
+        )
+        entry["aa"] = amino
+        if nucleotide:
+            entry["nt"] = bases
+            # How much read sits outside the domain, per side, for traceability. A flank
+            # larger than a V-plus-constant read explains gets an informational note.
+            flanks = read_flanks(nucleotide, frame, bases.get("VDJRegion", ""))
+            if flanks:
+                entry["flank5Nt"], entry["flank3Nt"] = flanks
+                if flanks[0] + flanks[1] > FLANK_UNUSUAL_NT:
+                    entry["unusualFlank"] = "yes"
+        # CDR3 length from the regions the block itself built, so it matches
+        # the block's own CDR3 columns. nt in nucleotides, aa in residues.
+        if amino.get("CDR3"):
+            entry["cdr3LenAa"] = len(amino["CDR3"])
+        if nucleotide and bases.get("CDR3"):
+            entry["cdr3LenNt"] = len(bases["CDR3"])
+        entry["status"] = STATUS_ANNOTATED if any(amino.values()) else STATUS_FAILED
+        if entry["status"] == STATUS_ANNOTATED:
+            entry["domainComplete"] = domain_complete(entry)
+            entry["stopRegion"] = stop_region(entry)
+            entry["regionStatus"] = region_status(entry)
+            # Unknown, not unproductive, where the read stopped short.
+            entry["productive"] = (
+                "" if not entry["domainComplete"] and not entry["stopRegion"]
+                else "no" if entry["stopRegion"] else "yes"
             )
-            entry["aa"] = amino
-            if nucleotide:
-                entry["nt"] = bases
-                # How much read sits outside the domain, per side, for traceability. A flank
-                # larger than a V-plus-constant read explains gets an informational note.
-                flanks = read_flanks(nucleotide, frame, bases.get("VDJRegion", ""))
-                if flanks:
-                    entry["flank5Nt"], entry["flank3Nt"] = flanks
-                    if flanks[0] + flanks[1] > FLANK_UNUSUAL_NT:
-                        entry["unusualFlank"] = "yes"
-            # CDR3 length from the regions the block itself built, so it matches
-            # the block's own CDR3 columns. nt in nucleotides, aa in residues.
-            if amino.get("CDR3"):
-                entry["cdr3LenAa"] = len(amino["CDR3"])
-            if nucleotide and bases.get("CDR3"):
-                entry["cdr3LenNt"] = len(bases["CDR3"])
-            entry["status"] = STATUS_ANNOTATED if any(amino.values()) else STATUS_FAILED
-            if entry["status"] == STATUS_ANNOTATED:
-                entry["domainComplete"] = domain_complete(entry)
-                entry["stopRegion"] = stop_region(entry)
-                entry["regionStatus"] = region_status(entry)
-                # Unknown, not unproductive, where the read stopped short.
-                entry["productive"] = (
-                    "" if not entry["domainComplete"] and not entry["stopRegion"]
-                    else "no" if entry["stopRegion"] else "yes"
-                )
-                # mixcr-clonotyping names this true/false; the sequence table keeps
-                # the block's own yes/no for reading.
-                entry["productiveFlag"] = {"yes": "true", "no": "false"}.get(
-                    entry["productive"], "")
-                reads = [peaks[p] for p in sequence.get("reads", []) if p in peaks]
-                mixed = mixed_positions(bases.get("CDR3", "") if nucleotide else "", reads)
-                if mixed is not None:
-                    entry["mixedPositions"] = mixed
-                mixed_all = mixed_positions(bases.get("VDJRegion", "") if nucleotide else "", reads)
-                if mixed_all is not None:
-                    entry["mixedPositionsDomain"] = mixed_all
+            # mixcr-clonotyping names this true/false; the sequence table keeps
+            # the block's own yes/no for reading.
+            entry["productiveFlag"] = {"yes": "true", "no": "false"}.get(
+                entry["productive"], "")
+            reads = [peaks[p] for p in sequence.get("reads", []) if p in peaks]
+            mixed = mixed_positions(bases.get("CDR3", "") if nucleotide else "", reads)
+            if mixed is not None:
+                entry["mixedPositions"] = mixed
+            mixed_all = mixed_positions(bases.get("VDJRegion", "") if nucleotide else "", reads)
+            if mixed_all is not None:
+                entry["mixedPositionsDomain"] = mixed_all
 
+    def join_mixcr(entry, chosen, where, source, constant_hit=None):
+        """One domain's germline track, from the MiXCR alignment filed under `chosen`.
+        The constant call is filed under `chosen` too, unless `constant_hit` is given."""
         hit = aligned.get(chosen)
         if hit is not None:
             # MiXCR writes "-" where it found no hit. An absent gene is absent,
@@ -1725,7 +1814,8 @@ def main(argv=None):
             # The C gene, C hit and isotype come from the constant-boundary pass. The
             # domain-trimmed main align has no constant region, so its copies above are
             # empty; this fills them where the read's tail is a real constant.
-            for field, value in constant.get(chosen, {}).items():
+            for field, value in (constant.get(chosen, {}) if constant_hit is None
+                                 else constant_hit).items():
                 entry[field] = value
             # `chains` is MiXCR's locus; it travels under its own entry name.
             if hit.get("chains", "") not in ("", "-"):
@@ -1769,12 +1859,56 @@ def main(argv=None):
             if germline:
                 entry["germlineNt"] = germline
                 entry["germlineAa"] = translate_germline(germline)
-        elif args.mixcr and sequence.get("source") != "none":
+        elif args.mixcr and source != "none":
             # R31: no germline is not a failed annotation. The sequence keeps its
             # regions, its chain and its translation.
             not_aligned.append(where.strip())
 
-        annotations.append(entry)
+    def base_entry(sequence):
+        return {
+            "id": sequence["id"],
+            "plate": sequence["plate"],
+            "well": sequence["well"],
+            "declaredChain": sequence["chain"],
+            "pairKey": sequence.get("pairKey", ""),
+        }
+
+    for sequence in sequences:
+        where = "%s %s %s" % (sequence["plate"], sequence["well"], sequence["chain"])
+        chosen = choose_candidate(sequence, by_bucket, args.scheme)
+        nucleotide = nucleotides.get(chosen)
+        picks = scfv_split(chosen, by_bucket, args.scheme)
+
+        if len(picks) == 2:
+            # An scFv read: one entry per domain, a known construct pair. The two
+            # chains share the read, so they share its id and pair key; the side
+            # keeps their sequence keys apart.
+            for pick in picks:
+                entry = base_entry(sequence)
+                entry["sideTag"] = pick[0]
+                entry["construct"] = True
+                fill_domain(entry, pick, nucleotide, sequence)
+                # trim wrote each domain as its own record, so MiXCR aligned it
+                # under the read id plus the side. The constant align ran on the
+                # whole read, so its call is under the read id and belongs only to
+                # the domain whose locus the C gene shares.
+                whole = constant.get(chosen, {})
+                own = whole if constant_side(whole) == SIDES.get(pick[0]) else {}
+                join_mixcr(entry, chosen + SCFV_ID_SEP + pick[0], where,
+                           sequence.get("source"), constant_hit=own)
+                annotations.append(entry)
+        else:
+            entry = base_entry(sequence)
+            if picks:
+                fill_domain(entry, picks[0], nucleotide, sequence)
+            else:
+                entry["status"] = STATUS_FAILED
+                # Only a sequence that produced bases can fail to be numbered. One
+                # that never had a read is already accounted for upstream.
+                if sequence.get("source") != "none":
+                    not_numbered.append(where.strip())
+            join_mixcr(entry, chosen, where, sequence.get("source"))
+            annotations.append(entry)
 
     unpaired, mismatched = pair_up(annotations, args.chains_declared)
 
@@ -1811,6 +1945,12 @@ def main(argv=None):
     if args.out_sides:
         pathlib.Path(args.out_sides).write_text(json.dumps(sides))
 
+    # scFv reads were split into two domains of one molecule, so their chains are a
+    # construct pair; anything else the set pairs by the well is declared.
+    if args.out_pairing:
+        pairing = "construct" if any(e.get("construct") for e in annotations) else "declared"
+        pathlib.Path(args.out_pairing).write_text(json.dumps(pairing))
+
     pathlib.Path(args.out).write_text(
         json.dumps(
             {
@@ -1818,7 +1958,8 @@ def main(argv=None):
                 "annotations": annotations,
                 "notNumbered": not_numbered,
                 "notAligned": not_aligned,
-                "paired": pairing_applies(annotations, args.chains_declared),
+                "paired": (pairing_applies(annotations, args.chains_declared)
+                           or any(e.get("construct") for e in annotations)),
                 "sides": sides,
                 "unpaired": unpaired,
                 "chainMismatch": mismatched,

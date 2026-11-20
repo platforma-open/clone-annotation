@@ -22,9 +22,9 @@ TYPES := {
 
 SHOWN := {
 	cloneId: true, wells: true,
-	heavy_chain: true, heavy_vGene: true, heavy_cGene: true, heavy_isotype: true,
+	heavy_chain: true, heavy_vGene: true, heavy_jGene: true,
 	heavy_aa_CDR3: true,
-	light_chain: true, light_vGene: true, light_cGene: true, light_aa_CDR3: true
+	light_chain: true, light_vGene: true, light_jGene: true, light_aa_CDR3: true
 }
 
 // A number is reduced to the mean of its wells for the default column. The
@@ -46,9 +46,9 @@ axisSpec := {
 priority := func(column) {
 	order := {
 		cloneId: 1010, wellCount: 1000, wells: 999, pairStatus: 980, qcVerdict: 970, qcReason: 960,
-		heavy_chain: 910, heavy_vGene: 900, heavy_cGene: 896, heavy_isotype: 894,
+		heavy_chain: 910, heavy_vGene: 900, heavy_jGene: 899, heavy_cGene: 896, heavy_isotype: 894,
 		heavy_aa_CDR3: 880,
-		light_chain: 875, light_vGene: 870, light_cGene: 866, light_aa_CDR3: 850
+		light_chain: 875, light_vGene: 870, light_jGene: 869, light_cGene: 866, light_aa_CDR3: 850
 	}
 	if !is_undefined(order[column]) {
 		return order[column]
