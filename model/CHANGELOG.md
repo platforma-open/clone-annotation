@@ -1,5 +1,7 @@
 # @platforma-open/milaboratories.clone-annotation.model
 
+## 1.3.0
+
 ## 1.2.2
 
 ### Patch Changes

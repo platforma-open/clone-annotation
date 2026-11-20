@@ -1,6 +1,6 @@
 {
   "name": "@platforma-open/milaboratories.clone-annotation.software",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "The ANARCI and MiXCR join",
   "files": [
     "./dist/**/*"
