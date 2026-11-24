@@ -44,6 +44,9 @@ jobs:
       # the input to exist on the pinned `@v4` reusable workflow.
       require-package-path-bump: true
 
+      # .structure "ownNpmRegistry": publish @platforma-open to npm.platforma.bio.
+      npm-own-registry-scopes: '@platforma-open'
+
       npmrc-config: |
         {
           "registries": {
